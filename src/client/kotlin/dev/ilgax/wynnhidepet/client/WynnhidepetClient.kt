@@ -27,14 +27,34 @@ class WynnhidepetClient : ClientModInitializer {
 
     override fun onInitializeClient() {
         ClientTickEvents.END_CLIENT_TICK.register { client ->
+            val isOnWynncraft = client.currentServerEntry?.address?.contains("wynncraft", ignoreCase = true) == true
+
+            if (isOnWynncraft) {
+                PetEntityTracker.update(client)
+            }
+
             while (toggleKey.wasPressed()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
+
+                if (!isOnWynncraft) {
+                    if (holder.config.showToggleMessage) {
+                        client.player?.sendMessage(
+                            Text.literal("§cWynnCraft Hide Pets only works on Wynncraft!"),
+                            false
+                        )
+                    }
+                    continue
+                }
+
                 holder.config.hidePets = !holder.config.hidePets
                 holder.save()
-                client.player?.sendMessage(
-                    Text.literal("Pet visibility: ${if (holder.config.hidePets) "HIDDEN" else "VISIBLE"}"),
-                    false
-                )
+
+                if (holder.config.showToggleMessage) {
+                    client.player?.sendMessage(
+                        Text.literal("§ePets: ${if (holder.config.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
+                        false
+                    )
+                }
             }
         }
     }

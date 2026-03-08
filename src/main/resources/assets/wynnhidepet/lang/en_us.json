@@ -1,4 +1,7 @@
 {
     "key.wynnhidepet.toggle": "Toggle Pet Visibility",
-    "key.categories.wynnhidepet.keys": "WynnHidePet"
+    "key.category.wynnhidepet.keys": "WynnCraft Hide Pets",
+    "text.autoconfig.wynnhidepet.title": "WynnCraft Hide Pets Config",
+    "text.autoconfig.wynnhidepet.option.hidePets": "Hide Pets",
+    "text.autoconfig.wynnhidepet.option.showToggleMessage": "Show Toggle Message"
 }
