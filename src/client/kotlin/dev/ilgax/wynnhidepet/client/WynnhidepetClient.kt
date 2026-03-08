@@ -33,7 +33,7 @@ class WynnhidepetClient : ClientModInitializer {
                 holder.save()
                 client.player?.sendMessage(
                     Text.literal("Pet visibility: ${if (holder.config.hidePets) "HIDDEN" else "VISIBLE"}"),
-                    true
+                    false
                 )
             }
         }

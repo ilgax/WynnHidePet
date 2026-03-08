@@ -1,9 +1,11 @@
 package dev.ilgax.wynnhidepet.mixin.client
 
-import dev.ilgax.wynnhidepet.ModConfig
+import dev.ilgax.wynnhidepet.getConfig
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.render.entity.EntityRenderer
 import net.minecraft.entity.Entity
-import net.minecraft.entity.player.PlayerEntity
+import net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity
+import net.minecraft.entity.decoration.InteractionEntity
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -19,8 +21,14 @@ class EntityRendererMixin<T : Entity> {
         x: Double, y: Double, z: Double,
         cir: CallbackInfoReturnable<Boolean>
     ) {
-        if (ModConfig.get().hidePets && entity !is PlayerEntity && entity.hasCustomName()) {
-            cir.returnValue = false
+        if (!getConfig().hidePets) return
+        val player = MinecraftClient.getInstance().player ?: return
+
+        // Wynncraft pets are item_display + interaction entities near the player
+        if (entity is ItemDisplayEntity || entity is InteractionEntity) {
+            if (entity.squaredDistanceTo(player) <= 36.0) { // within 6 blocks
+                cir.returnValue = false
+            }
         }
     }
 }
