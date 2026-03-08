@@ -6,7 +6,7 @@
   "description": "A kotlin mod for fabric to hide your pets in wynncraft",
   "authors": [],
   "contact": {},
-  "license": "MIT",
+  "license": "CC-BY-NC-4.0",
 "environment": "client",
   "entrypoints": {
     "client": [
