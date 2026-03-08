@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "wynnhidepet",
+  "version": "${version}",
+  "name": "WynnHidePet",
+  "description": "A kotlin mod for fabric to hide your pets in wynncraft",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+"environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.ilgax.wynnhidepet.client.WynnhidepetClient"
+    ],
+    "main": [
+      "dev.ilgax.wynnhidepet.Wynnhidepet"
+    ],
+    "modmenu": [
+      "dev.ilgax.wynnhidepet.client.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    "wynnhidepet.mixins.json",
+    {
+      "config": "wynnhidepet.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-language-kotlin": ">=${kotlin_loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}

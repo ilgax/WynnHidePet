@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"$GRADLE_HOME/bin/gradle\":*)"
+    ]
+  }
+}
