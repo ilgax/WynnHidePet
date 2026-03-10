@@ -9,7 +9,7 @@
     "homepage": "https://github.com/ilgax/Wynnhidepet",
     "issues": "https://github.com/ilgax/Wynnhidepet/issues"
   },
-  "license": "CC-BY-NC-4.0",
+  "license": "GPL-3.0-or-later",
   "icon": "icon.png",
   "environment": "client",
   "entrypoints": {
