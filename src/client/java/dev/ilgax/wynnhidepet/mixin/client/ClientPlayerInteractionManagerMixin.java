@@ -1,0 +1,92 @@
+package dev.ilgax.wynnhidepet.mixin.client;
+
+import dev.ilgax.wynnhidepet.ModConfigKt;
+import dev.ilgax.wynnhidepet.client.PetEntityTracker;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerInteractionManager;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
+import org.jetbrains.annotations.Nullable;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.Optional;
+
+@Mixin(ClientPlayerInteractionManager.class)
+public class ClientPlayerInteractionManagerMixin {
+
+    @Inject(method = "attackEntity", at = @At("HEAD"), cancellable = true)
+    private void onAttackEntity(PlayerEntity player, Entity entity, CallbackInfo ci) {
+        if (ModConfigKt.getConfig().getHidePets() && PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "interactEntity", at = @At("HEAD"), cancellable = true)
+    private void onInteractEntity(PlayerEntity player, Entity entity, Hand hand, CallbackInfoReturnable<ActionResult> cir) {
+        if (!ModConfigKt.getConfig().getHidePets() || !PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) return;
+        Entity behind = findEntityBehindPets(player);
+        if (behind == null) {
+            cir.setReturnValue(ActionResult.PASS);
+            return;
+        }
+        ClientPlayerInteractionManager im = MinecraftClient.getInstance().interactionManager;
+        if (im == null) { cir.setReturnValue(ActionResult.PASS); return; }
+        im.interactEntity(player, behind, hand);
+        cir.setReturnValue(ActionResult.SUCCESS);
+    }
+
+    @Inject(method = "interactEntityAtLocation", at = @At("HEAD"), cancellable = true)
+    private void onInteractEntityAtLocation(PlayerEntity player, Entity entity, EntityHitResult hitResult, Hand hand, CallbackInfoReturnable<ActionResult> cir) {
+        if (!ModConfigKt.getConfig().getHidePets() || !PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) return;
+        Entity behind = findEntityBehindPets(player);
+        if (behind == null) {
+            cir.setReturnValue(ActionResult.PASS);
+            return;
+        }
+        ClientPlayerInteractionManager im = MinecraftClient.getInstance().interactionManager;
+        if (im == null) { cir.setReturnValue(ActionResult.PASS); return; }
+        im.interactEntity(player, behind, hand);
+        cir.setReturnValue(ActionResult.SUCCESS);
+    }
+
+    @Unique
+    @Nullable
+    private Entity findEntityBehindPets(PlayerEntity player) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return null;
+        double reach = player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
+        Vec3d eyePos = player.getEyePos();
+        Vec3d lookVec = player.getRotationVec(1.0f);
+        Vec3d endPos = eyePos.add(lookVec.multiply(reach));
+        Box searchBox = player.getBoundingBox().stretch(lookVec.multiply(reach)).expand(1.0, 1.0, 1.0);
+
+        Entity closest = null;
+        double closestDist = Double.MAX_VALUE;
+
+        for (Entity e : client.world.getOtherEntities(player, searchBox)) {
+            if (PetEntityTracker.INSTANCE.getPetEntityIds().contains(e.getId())) continue;
+            if (!e.canHit()) continue;
+            Optional<Vec3d> hit = e.getBoundingBox().expand(0.3).raycast(eyePos, endPos);
+            if (hit.isPresent()) {
+                double dist = eyePos.squaredDistanceTo(hit.get());
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closest = e;
+                }
+            }
+        }
+
+        return closest;
+    }
+}
