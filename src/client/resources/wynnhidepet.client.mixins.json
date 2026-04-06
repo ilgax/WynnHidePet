@@ -4,7 +4,8 @@
   "package": "dev.ilgax.wynnhidepet.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "EntityRendererMixin"
+    "EntityRendererMixin",
+    "ClientPlayerInteractionManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

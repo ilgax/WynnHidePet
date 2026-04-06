@@ -2,6 +2,7 @@ package dev.ilgax.wynnhidepet.client
 
 import dev.ilgax.wynnhidepet.getConfig
 import net.minecraft.client.MinecraftClient
+import net.minecraft.entity.decoration.DisplayEntity
 import net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity
 import net.minecraft.entity.decoration.DisplayEntity.TextDisplayEntity
 import net.minecraft.entity.decoration.InteractionEntity
@@ -23,34 +24,39 @@ object PetEntityTracker {
         val player = client.player ?: return
 
         newIds.clear()
-        val searchBox = player.boundingBox.expand(32.0)
 
+        // Use the player's render distance as the search radius. Entities beyond loaded chunks
+        // aren't tracked by the server anyway, and getEntitiesByType uses spatial indexing
+        // which is faster than iterating all world entities on a large server like Wynncraft.
+        val renderDistanceBlocks = client.options.viewDistance.value * 16.0
+        val searchBox = player.boundingBox.expand(renderDistanceBlocks)
         val interactions = world.getEntitiesByType(
             TypeFilter.instanceOf(InteractionEntity::class.java), searchBox) { true }
 
         for (interaction in interactions) {
             val nearbyBox = interaction.boundingBox.expand(2.0)
 
-            // Pick the closest root (by horizontal distance) so an enemy root nearby
-            // doesn't accidentally win over the pet's own root.
-            val root = world.getEntitiesByType(
+            // Pick the closest anchor (by horizontal distance) so an enemy entity nearby
+            // doesn't accidentally win over the pet's own anchor.
+            // No passenger requirement — creeper/guide pets may have no ItemDisplayEntity passengers.
+            val anchor = world.getEntitiesByType(
                 TypeFilter.instanceOf(ItemDisplayEntity::class.java), nearbyBox) { true }
-                .filter { it.passengerList.any { p -> p is ItemDisplayEntity } }
                 .minByOrNull { val dx = it.x - interaction.x; val dz = it.z - interaction.z; dx*dx + dz*dz }
                 ?: continue
 
             // Wynncraft spawns each pet cluster atomically with consecutive entity IDs.
-            // The root and interaction are the outermost IDs in the cluster, so the
-            // standalone shadow and nametag always fall within [root.id, interaction.id].
+            // The anchor and interaction are the outermost IDs in the cluster, so the
+            // standalone shadow and nametag always fall within [anchor.id, interaction.id].
             // This excludes nearby enemy entities even when they're at the same position.
-            val clusterMin = minOf(root.id, interaction.id)
-            val clusterMax = maxOf(root.id, interaction.id)
+            val clusterMin = minOf(anchor.id, interaction.id)
+            val clusterMax = maxOf(anchor.id, interaction.id)
             if (clusterMax - clusterMin > 50) continue // sanity check against bad data
             val clusterRange = clusterMin..clusterMax
 
-            // Confirmed pet — add root and all passengers
-            newIds.add(root.id)
-            root.passengerList.filterIsInstance<ItemDisplayEntity>()
+            // Confirmed pet — add interaction entity, anchor, and all display-entity passengers
+            newIds.add(interaction.id)
+            newIds.add(anchor.id)
+            anchor.passengerList.filterIsInstance<DisplayEntity>()
                 .forEach { newIds.add(it.id) }
 
             // Standalone shadow: nearby + within cluster ID range
