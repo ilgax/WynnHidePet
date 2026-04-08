@@ -26,12 +26,16 @@ class WynnhidepetClient : ClientModInitializer {
     }
 
     override fun onInitializeClient() {
+        DebugCommand.register()
+
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             val isOnWynncraft = client.currentServerEntry?.address?.contains("wynncraft", ignoreCase = true) == true
 
             if (isOnWynncraft) {
                 PetEntityTracker.update(client)
             }
+
+            DebugCommand.tick(client)
 
             while (toggleKey.wasPressed()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
