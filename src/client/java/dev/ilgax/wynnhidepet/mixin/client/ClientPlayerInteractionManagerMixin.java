@@ -5,7 +5,6 @@ import dev.ilgax.wynnhidepet.client.PetEntityTracker;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
@@ -65,23 +64,29 @@ public class ClientPlayerInteractionManagerMixin {
     private Entity findEntityBehindPets(PlayerEntity player) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null) return null;
-        double reach = player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
+
+        // Use the modern interaction range helper (1.20.5+)
+        double reach = player.getEntityInteractionRange();
         Vec3d eyePos = player.getEyePos();
         Vec3d lookVec = player.getRotationVec(1.0f);
         Vec3d endPos = eyePos.add(lookVec.multiply(reach));
-        Box searchBox = player.getBoundingBox().stretch(lookVec.multiply(reach)).expand(1.0, 1.0, 1.0);
+
+        // Use a tighter bounding box for the initial search to improve performance.
+        // We only care about entities along the look vector.
+        Box searchBox = player.getBoundingBox().stretch(lookVec.multiply(reach)).expand(0.5);
 
         Entity closest = null;
-        double closestDist = Double.MAX_VALUE;
+        double closestDistSq = reach * reach;
 
-        for (Entity e : client.world.getOtherEntities(player, searchBox)) {
-            if (PetEntityTracker.INSTANCE.getPetEntityIds().contains(e.getId())) continue;
-            if (!e.canHit()) continue;
-            Optional<Vec3d> hit = e.getBoundingBox().expand(0.3).raycast(eyePos, endPos);
+        // Filter out pets early to avoid redundant raycasts.
+        for (Entity e : client.world.getOtherEntities(player, searchBox,
+                ent -> !PetEntityTracker.INSTANCE.getPetEntityIds().contains(ent.getId()) && ent.canHit())) {
+
+            Optional<Vec3d> hit = e.getBoundingBox().expand(e.getTargetingMargin()).raycast(eyePos, endPos);
             if (hit.isPresent()) {
-                double dist = eyePos.squaredDistanceTo(hit.get());
-                if (dist < closestDist) {
-                    closestDist = dist;
+                double distSq = eyePos.squaredDistanceTo(hit.get());
+                if (distSq < closestDistSq) {
+                    closestDistSq = distSq;
                     closest = e;
                 }
             }

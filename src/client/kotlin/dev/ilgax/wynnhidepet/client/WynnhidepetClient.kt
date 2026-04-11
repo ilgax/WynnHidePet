@@ -1,6 +1,7 @@
 package dev.ilgax.wynnhidepet.client
 
 import dev.ilgax.wynnhidepet.ModConfig
+import dev.ilgax.wynnhidepet.getConfig
 import me.shedaniel.autoconfig.AutoConfig
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
@@ -25,14 +26,20 @@ class WynnhidepetClient : ClientModInitializer {
         )
     }
 
+    private var ticks = 0
+
     override fun onInitializeClient() {
         DebugCommand.register()
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             val isOnWynncraft = client.currentServerEntry?.address?.contains("wynncraft", ignoreCase = true) == true
+            val config = getConfig()
 
             if (isOnWynncraft) {
-                PetEntityTracker.update(client)
+                ticks++
+                if (ticks % config.updateFrequency == 0) {
+                    PetEntityTracker.update(client)
+                }
             }
 
             DebugCommand.tick(client)
@@ -52,6 +59,9 @@ class WynnhidepetClient : ClientModInitializer {
 
                 holder.config.hidePets = !holder.config.hidePets
                 holder.save()
+
+                // Trigger an immediate update to hide/show pets instantly
+                PetEntityTracker.update(client)
 
                 if (holder.config.showToggleMessage) {
                     client.player?.sendMessage(

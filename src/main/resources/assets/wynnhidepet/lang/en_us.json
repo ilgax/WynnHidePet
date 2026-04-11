@@ -3,5 +3,6 @@
     "key.category.wynnhidepet.keys": "WynnCraft Hide Pets",
     "text.autoconfig.wynnhidepet.title": "WynnCraft Hide Pets Config",
     "text.autoconfig.wynnhidepet.option.hidePets": "Hide Pets",
-    "text.autoconfig.wynnhidepet.option.showToggleMessage": "Show Toggle Message"
+    "text.autoconfig.wynnhidepet.option.showToggleMessage": "Show Toggle Message",
+    "text.autoconfig.wynnhidepet.option.updateFrequency": "Update Frequency (ticks) 20 = 1 second"
 }

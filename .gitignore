@@ -4,7 +4,7 @@
 *.iml
 *.ipr
 *.iws
-claude.md
+GEMINI.md
 # IntelliJ
 out/
 # mpeltonen/sbt-idea plugin

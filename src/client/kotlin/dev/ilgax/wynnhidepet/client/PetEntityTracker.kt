@@ -2,22 +2,26 @@ package dev.ilgax.wynnhidepet.client
 
 import dev.ilgax.wynnhidepet.getConfig
 import net.minecraft.client.MinecraftClient
-import net.minecraft.entity.decoration.DisplayEntity
-import net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity
+import net.minecraft.entity.Entity
 import net.minecraft.entity.decoration.DisplayEntity.TextDisplayEntity
 import net.minecraft.entity.decoration.InteractionEntity
+import net.minecraft.entity.passive.VillagerEntity
+import net.minecraft.entity.passive.WanderingTraderEntity
+import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.util.TypeFilter
 
 object PetEntityTracker {
 
     val petEntityIds: MutableSet<Int> = HashSet()
+    private val entityExpirations: MutableMap<Int, Int> = HashMap()
     private val newIds = HashSet<Int>()
-    private var graceTicks = 0
+    private var localTick = 0
 
     fun update(client: MinecraftClient) {
+        localTick++
         if (!getConfig().hidePets) {
             petEntityIds.clear()
-            graceTicks = 0
+            entityExpirations.clear()
             return
         }
         val world = client.world ?: return
@@ -25,69 +29,70 @@ object PetEntityTracker {
 
         newIds.clear()
 
-        // Use the player's render distance as the search radius. Entities beyond loaded chunks
-        // aren't tracked by the server anyway, and getEntitiesByType uses spatial indexing
-        // which is faster than iterating all world entities on a large server like Wynncraft.
-        val renderDistanceBlocks = client.options.viewDistance.value * 16.0
-        val searchBox = player.boundingBox.expand(renderDistanceBlocks)
+        // Use a fixed 48-block radius.
+        val searchBox = player.boundingBox.expand(48.0)
         val interactions = world.getEntitiesByType(
             TypeFilter.instanceOf(InteractionEntity::class.java), searchBox) { true }
 
         for (interaction in interactions) {
-            val nearbyBox = interaction.boundingBox.expand(2.0)
+            // Pet interaction hitboxes (approx 0.6x0.9 up to 1.0x2.0 for vybels/moths)
+            if (interaction.width < 0.2f || interaction.width > 1.2f) continue
+            if (interaction.height < 0.4f || interaction.height > 2.5f) continue
 
-            // Pick the closest anchor (by horizontal distance) so an enemy entity nearby
-            // doesn't accidentally win over the pet's own anchor.
-            // No passenger requirement — creeper/guide pets may have no ItemDisplayEntity passengers.
-            val anchor = world.getEntitiesByType(
-                TypeFilter.instanceOf(ItemDisplayEntity::class.java), nearbyBox) { true }
-                .minByOrNull { val dx = it.x - interaction.x; val dz = it.z - interaction.z; dx*dx + dz*dz }
-                ?: continue
+            val interactionAge = interaction.age
+            val clusterBox = interaction.boundingBox.expand(2.0, 5.0, 2.0)
 
-            // Wynncraft spawns each pet cluster atomically with consecutive entity IDs.
-            // The anchor and interaction are the outermost IDs in the cluster, so the
-            // standalone shadow and nametag always fall within [anchor.id, interaction.id].
-            // This excludes nearby enemy entities even when they're at the same position.
-            val clusterMin = minOf(anchor.id, interaction.id)
-            val clusterMax = maxOf(anchor.id, interaction.id)
-            if (clusterMax - clusterMin > 50) continue // sanity check against bad data
-            val clusterRange = clusterMin..clusterMax
+            // Surgical search: Find potential components based on strict Age match (+/- 2 ticks).
+            val nearby = world.getOtherEntities(interaction, clusterBox) { 
+                it.id != interaction.id && 
+                it !is PlayerEntity && 
+                it !is InteractionEntity &&
+                it !is VillagerEntity &&
+                it !is WanderingTraderEntity &&
+                kotlin.math.abs(it.age - interactionAge) <= 2
+            }
 
-            // Confirmed pet — add interaction entity, anchor, and all display-entity passengers
+            // Refine candidates into confirmed pet parts:
+            // 1. Models/Shadows (ItemDisplay, Mob, ArmorStand) are hidden by Age alone.
+            // 2. Nametags (TextDisplay) are ONLY hidden if they match Age AND have PUA symbols.
+            val confirmedParts = nearby.filter {
+                it !is TextDisplayEntity || it.text.string.contains("\uE060")
+            }
+
+            // A valid pet must have at least one component part confirmed
+            if (confirmedParts.isEmpty()) continue
+
+            // Confirmed pet — track the interaction and its specific components recursively.
             newIds.add(interaction.id)
-            newIds.add(anchor.id)
-            anchor.passengerList.filterIsInstance<DisplayEntity>()
-                .forEach { newIds.add(it.id) }
-
-            // Standalone shadow: nearby + within cluster ID range
-            world.getEntitiesByType(TypeFilter.instanceOf(ItemDisplayEntity::class.java), nearbyBox) { true }
-                .filter { it.vehicle == null && it.passengerList.isEmpty() && it.id in clusterRange }
-                .forEach { newIds.add(it.id) }
-
-            // Pet nametag: standalone text_display with PUA surrogate chars + within cluster ID range.
-            // NPC nametags have vehicle != null. Enemy health bars are in a different ID range.
-            val tallBox = interaction.boundingBox.expand(2.0, 5.0, 2.0)
-            world.getEntitiesByType(TypeFilter.instanceOf(TextDisplayEntity::class.java), tallBox) { true }
-                .filter { it.vehicle == null && it.text.string.any { c -> c.isHighSurrogate() } && it.id in clusterRange }
-                .forEach { newIds.add(it.id) }
+            for (entity in confirmedParts) {
+                addAllPassengersRecursive(entity, newIds)
+            }
         }
 
-        when {
-            newIds.isNotEmpty() -> {
-                // Normal case: found pets this tick — add new IDs without removing old ones
-                // to prevent flickering when detection temporarily misses entities during camera movement.
-                petEntityIds.addAll(newIds)
-                graceTicks = 60 // ~3 seconds of forgiveness for teleport lag
+        // Add detected IDs with a 60-tick (3s) TTL to prevent flickering
+        for (id in newIds) {
+            entityExpirations[id] = localTick + 60
+        }
+
+        // Clean up expired IDs
+        val iterator = entityExpirations.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.value < localTick) {
+                iterator.remove()
             }
-            graceTicks > 0 -> {
-                // Pet temporarily missing (teleporting to catch up after fast movement).
-                // Keep the previous set until the grace period expires.
-                graceTicks--
-            }
-            else -> {
-                // Grace period expired with no pets detected — clear the set.
-                petEntityIds.clear()
-            }
+        }
+
+        // Sync the public set for the renderer and interaction mixins
+        petEntityIds.clear()
+        petEntityIds.addAll(entityExpirations.keys)
+    }
+
+    private fun addAllPassengersRecursive(entity: Entity, set: MutableSet<Int>) {
+        if (entity is PlayerEntity || entity is VillagerEntity || entity is WanderingTraderEntity) return
+        set.add(entity.id)
+        for (passenger in entity.passengerList) {
+            addAllPassengersRecursive(passenger, set)
         }
     }
 }
