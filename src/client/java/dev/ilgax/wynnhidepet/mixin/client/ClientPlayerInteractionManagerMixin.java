@@ -2,15 +2,15 @@ package dev.ilgax.wynnhidepet.mixin.client;
 
 import dev.ilgax.wynnhidepet.ModConfigKt;
 import dev.ilgax.wynnhidepet.client.PetEntityTracker;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerInteractionManager;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -21,70 +21,90 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Optional;
 
-@Mixin(ClientPlayerInteractionManager.class)
+@Mixin(MultiPlayerGameMode.class)
 public class ClientPlayerInteractionManagerMixin {
 
-    @Inject(method = "attackEntity", at = @At("HEAD"), cancellable = true)
-    private void onAttackEntity(PlayerEntity player, Entity entity, CallbackInfo ci) {
+    @Unique
+    private long wynnhidepet_lastInteractTick = -1L;
+
+    @Inject(method = "attack", at = @At("HEAD"), cancellable = true)
+    private void onAttackEntity(Player player, Entity entity, CallbackInfo ci) {
         if (ModConfigKt.getConfig().getHidePets() && PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) {
             ci.cancel();
         }
     }
 
-    @Inject(method = "interactEntity", at = @At("HEAD"), cancellable = true)
-    private void onInteractEntity(PlayerEntity player, Entity entity, Hand hand, CallbackInfoReturnable<ActionResult> cir) {
+    @Inject(method = "interact", at = @At("HEAD"), cancellable = true)
+    private void onInteractEntity(Player player, Entity entity, InteractionHand hand, CallbackInfoReturnable<InteractionResult> cir) {
         if (!ModConfigKt.getConfig().getHidePets() || !PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) return;
+        Minecraft client = Minecraft.getInstance();
+        if (client.level == null) { cir.setReturnValue(InteractionResult.PASS); return; }
+        long currentTick = client.level.getGameTime();
+        if (wynnhidepet_lastInteractTick == currentTick) { cir.setReturnValue(InteractionResult.PASS); return; }
+        
         Entity behind = findEntityBehindPets(player);
-        if (behind == null) {
-            cir.setReturnValue(ActionResult.PASS);
-            return;
+        if (behind != null) {
+            MultiPlayerGameMode im = client.gameMode;
+            if (im != null) {
+                wynnhidepet_lastInteractTick = currentTick;
+                InteractionResult result = im.interact(player, behind, hand);
+                cir.setReturnValue(result);
+                return;
+            }
         }
-        ClientPlayerInteractionManager im = MinecraftClient.getInstance().interactionManager;
-        if (im == null) { cir.setReturnValue(ActionResult.PASS); return; }
-        im.interactEntity(player, behind, hand);
-        cir.setReturnValue(ActionResult.SUCCESS);
+        
+        // If no entity behind or no gameMode, consume the click so it doesn't reach the pet
+        cir.setReturnValue(InteractionResult.PASS);
     }
 
-    @Inject(method = "interactEntityAtLocation", at = @At("HEAD"), cancellable = true)
-    private void onInteractEntityAtLocation(PlayerEntity player, Entity entity, EntityHitResult hitResult, Hand hand, CallbackInfoReturnable<ActionResult> cir) {
+    @Inject(method = "interactAt", at = @At("HEAD"), cancellable = true)
+    private void onInteractEntityAtLocation(Player player, Entity entity, EntityHitResult hitResult, InteractionHand hand, CallbackInfoReturnable<InteractionResult> cir) {
         if (!ModConfigKt.getConfig().getHidePets() || !PetEntityTracker.INSTANCE.getPetEntityIds().contains(entity.getId())) return;
+        Minecraft client = Minecraft.getInstance();
+        if (client.level == null) { cir.setReturnValue(InteractionResult.PASS); return; }
+        long currentTick = client.level.getGameTime();
+        if (wynnhidepet_lastInteractTick == currentTick) { cir.setReturnValue(InteractionResult.PASS); return; }
+
         Entity behind = findEntityBehindPets(player);
-        if (behind == null) {
-            cir.setReturnValue(ActionResult.PASS);
-            return;
+        if (behind != null) {
+            MultiPlayerGameMode im = client.gameMode;
+            if (im != null) {
+                wynnhidepet_lastInteractTick = currentTick;
+                InteractionResult result = im.interact(player, behind, hand);
+                cir.setReturnValue(result);
+                return;
+            }
         }
-        ClientPlayerInteractionManager im = MinecraftClient.getInstance().interactionManager;
-        if (im == null) { cir.setReturnValue(ActionResult.PASS); return; }
-        im.interactEntity(player, behind, hand);
-        cir.setReturnValue(ActionResult.SUCCESS);
+
+        // Always block/pass on the pet itself
+        cir.setReturnValue(InteractionResult.PASS);
     }
 
     @Unique
     @Nullable
-    private Entity findEntityBehindPets(PlayerEntity player) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world == null) return null;
+    private Entity findEntityBehindPets(Player player) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.level == null) return null;
 
-        // Use the modern interaction range helper (1.20.5+)
-        double reach = player.getEntityInteractionRange();
-        Vec3d eyePos = player.getEyePos();
-        Vec3d lookVec = player.getRotationVec(1.0f);
-        Vec3d endPos = eyePos.add(lookVec.multiply(reach));
+        // Mojang 1.21.1: getEntityInteractionRange() -> entityInteractionRange()
+        double reach = player.entityInteractionRange();
+        Vec3 eyePos = player.getEyePosition();
+        Vec3 lookVec = player.getViewVector(1.0f);
+        Vec3 endPos = eyePos.add(lookVec.multiply(reach, reach, reach));
 
-        // Use a tighter bounding box for the initial search to improve performance.
-        // We only care about entities along the look vector.
-        Box searchBox = player.getBoundingBox().stretch(lookVec.multiply(reach)).expand(0.5);
+        // Use a tighter bounding box for the initial search
+        AABB searchBox = player.getBoundingBox().expandTowards(lookVec.scale(reach)).inflate(0.5);
 
         Entity closest = null;
         double closestDistSq = reach * reach;
 
         // Filter out pets early to avoid redundant raycasts.
-        for (Entity e : client.world.getOtherEntities(player, searchBox,
-                ent -> !PetEntityTracker.INSTANCE.getPetEntityIds().contains(ent.getId()) && ent.canHit())) {
+        for (Entity e : client.level.getEntities(player, searchBox,
+                ent -> !PetEntityTracker.INSTANCE.getPetEntityIds().contains(ent.getId()) && ent.isPickable())) {
 
-            Optional<Vec3d> hit = e.getBoundingBox().expand(e.getTargetingMargin()).raycast(eyePos, endPos);
+            Optional<Vec3> hit = e.getBoundingBox().inflate(e.getPickRadius()).clip(eyePos, endPos);
             if (hit.isPresent()) {
-                double distSq = eyePos.squaredDistanceTo(hit.get());
+                double distSq = eyePos.distanceToSqr(hit.get());
                 if (distSq < closestDistSq) {
                     closestDistSq = distSq;
                     closest = e;

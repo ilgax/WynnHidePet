@@ -9,6 +9,10 @@ class ModConfig : ConfigData {
     var hidePets: Boolean = false
     var showToggleMessage: Boolean = true
     var updateFrequency: Int = 5
+
+    override fun validatePostLoad() {
+        updateFrequency = updateFrequency.coerceAtLeast(1)
+    }
 }
 
 fun getConfig(): ModConfig = AutoConfig.getConfigHolder(ModConfig::class.java).config

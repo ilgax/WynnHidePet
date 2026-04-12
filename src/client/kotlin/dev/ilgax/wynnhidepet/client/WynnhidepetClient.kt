@@ -1,27 +1,32 @@
 package dev.ilgax.wynnhidepet.client
 
+import com.mojang.blaze3d.platform.InputConstants
+import dev.ilgax.wynnhidepet.BuildConstants
 import dev.ilgax.wynnhidepet.ModConfig
 import dev.ilgax.wynnhidepet.getConfig
 import me.shedaniel.autoconfig.AutoConfig
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
-import net.minecraft.client.option.KeyBinding
-import net.minecraft.client.util.InputUtil
-import net.minecraft.text.Text
-import net.minecraft.util.Identifier
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
+import net.minecraft.client.KeyMapping
+import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
 import org.lwjgl.glfw.GLFW
 
 class WynnhidepetClient : ClientModInitializer {
 
     companion object {
-        private val category = KeyBinding.Category(Identifier.of("wynnhidepet", "keys"))
+        private val CUSTOM_CATEGORY = KeyMapping.Category.register(
+            Identifier.fromNamespaceAndPath("wynnhidepet", "keys")
+        )
+
         val toggleKey = KeyBindingHelper.registerKeyBinding(
-            KeyBinding(
+            KeyMapping(
                 "key.wynnhidepet.toggle",
-                InputUtil.Type.KEYSYM,
+                InputConstants.Type.KEYSYM,
                 GLFW.GLFW_KEY_H,
-                category
+                CUSTOM_CATEGORY
             )
         )
     }
@@ -29,28 +34,32 @@ class WynnhidepetClient : ClientModInitializer {
     private var ticks = 0
 
     override fun onInitializeClient() {
-        DebugCommand.register()
+        if (BuildConstants.DEBUG) {
+            DebugCommand.register()
+        }
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
-            val isOnWynncraft = client.currentServerEntry?.address?.contains("wynncraft", ignoreCase = true) == true
+            val isOnWynncraft = client.currentServer?.ip?.contains("wynncraft", ignoreCase = true) == true
             val config = getConfig()
 
             if (isOnWynncraft) {
-                ticks++
-                if (ticks % config.updateFrequency == 0) {
+                ticks = (ticks + 1) % config.updateFrequency.coerceAtLeast(1)
+                if (ticks == 0) {
                     PetEntityTracker.update(client)
                 }
             }
 
-            DebugCommand.tick(client)
+            if (BuildConstants.DEBUG) {
+                DebugCommand.tick(client)
+            }
 
-            while (toggleKey.wasPressed()) {
+            while (toggleKey.consumeClick()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
 
                 if (!isOnWynncraft) {
                     if (holder.config.showToggleMessage) {
-                        client.player?.sendMessage(
-                            Text.literal("§cWynnCraft Hide Pets only works on Wynncraft!"),
+                        client.player?.displayClientMessage(
+                            Component.literal("§cWynnCraft Hide Pets only works on Wynncraft!"),
                             false
                         )
                     }
@@ -64,12 +73,16 @@ class WynnhidepetClient : ClientModInitializer {
                 PetEntityTracker.update(client)
 
                 if (holder.config.showToggleMessage) {
-                    client.player?.sendMessage(
-                        Text.literal("§ePets: ${if (holder.config.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
+                    client.player?.displayClientMessage(
+                        Component.literal("§ePets: ${if (holder.config.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
                         false
                     )
                 }
             }
+        }
+
+        ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
+            PetEntityTracker.reset()
         }
     }
 }

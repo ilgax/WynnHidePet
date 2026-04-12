@@ -1,26 +1,27 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "2.3.10"
-    id("fabric-loom") version "1.15-SNAPSHOT"
+    id("net.fabricmc.fabric-loom-remap") version "1.16-SNAPSHOT"
     id("maven-publish")
+    id("org.jetbrains.kotlin.jvm") version "2.3.20"
 }
 
-version = project.property("mod_version") as String
-group = project.property("maven_group") as String
+version = providers.gradleProperty("mod_version").get()
+group = providers.gradleProperty("maven_group").get()
 
 base {
-    archivesName.set(project.property("archives_base_name") as String)
+    archivesName.set(providers.gradleProperty("archives_base_name").get())
 }
 
-val targetJavaVersion = 21
 java {
-    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
     // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
     // if it is present.
     // If you remove this line, sources will not be generated.
     withSourcesJar()
+    
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 loom {
@@ -28,8 +29,8 @@ loom {
 
     mods {
         register("wynnhidepet") {
-            sourceSet("main")
-            sourceSet("client")
+            sourceSet(sourceSets.main.get())
+            sourceSet(sourceSets.getByName("client"))
         }
     }
 }
@@ -47,28 +48,28 @@ repositories {
 
 dependencies {
     // To change the versions see the gradle.properties file
-    minecraft("com.mojang:minecraft:${project.property("minecraft_version")}")
-    mappings("net.fabricmc:yarn:${project.property("yarn_mappings")}:v2")
-    modImplementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
-    modImplementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
+    minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
+    mappings(loom.officialMojangMappings())
+    modImplementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
+    modImplementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("kotlin_loader_version").get()}")
 
-    modImplementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
-    modApi("me.shedaniel.cloth:cloth-config-fabric:${project.property("cloth_config_version")}")
-    modImplementation("com.terraformersmc:modmenu:${project.property("modmenu_version")}")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_version").get()}")
+    modApi("me.shedaniel.cloth:cloth-config-fabric:${providers.gradleProperty("cloth_config_version").get()}")
+    modImplementation("com.terraformersmc:modmenu:${providers.gradleProperty("modmenu_version").get()}")
 }
 
 tasks.processResources {
-    inputs.property("version", project.version)
-    inputs.property("minecraft_version", project.property("minecraft_version"))
-    inputs.property("loader_version", project.property("loader_version"))
+    inputs.property("version", version)
+    inputs.property("minecraft_version", providers.gradleProperty("minecraft_version").get())
+    inputs.property("loader_version", providers.gradleProperty("loader_version").get())
     filteringCharset = "UTF-8"
 
     filesMatching("fabric.mod.json") {
         expand(
-            "version" to project.version,
-            "minecraft_version" to project.property("minecraft_version").toString(),
-            "loader_version" to project.property("loader_version").toString(),
-            "kotlin_loader_version" to project.property("kotlin_loader_version").toString()
+            "version" to version,
+            "minecraft_version" to providers.gradleProperty("minecraft_version").get(),
+            "loader_version" to providers.gradleProperty("loader_version").get(),
+            "kotlin_loader_version" to providers.gradleProperty("kotlin_loader_version").get()
         )
     }
 }
@@ -79,12 +80,40 @@ tasks.withType<JavaCompile>().configureEach {
     // see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
     // If Javadoc is generated, this must be specified in that task too.
     options.encoding = "UTF-8"
-    options.release.set(targetJavaVersion)
+    options.release = 21
 }
 
-tasks.withType<KotlinCompile>().configureEach {
-    compilerOptions.jvmTarget.set(JvmTarget.fromTarget(targetJavaVersion.toString()))
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_21
+    }
 }
+
+val generateBuildConfig by tasks.registering {
+    val isRunClient = gradle.startParameter.taskNames.any { it.contains("runClient", ignoreCase = true) }
+    val debugValue = project.findProperty("wynnhidepet.debug") == "true" || isRunClient
+    val outputDir = layout.buildDirectory.dir("generated/buildconfig/kotlin")
+    
+    inputs.property("debug", debugValue)
+    outputs.dir(outputDir)
+    
+    doLast {
+        val file = outputDir.get().file("dev/ilgax/wynnhidepet/BuildConstants.kt").asFile
+        file.parentFile.mkdirs()
+        file.writeText("""
+            package dev.ilgax.wynnhidepet
+            
+            object BuildConstants {
+                const val DEBUG = $debugValue
+            }
+        """.trimIndent())
+    }
+}
+
+kotlin.sourceSets.main {
+    kotlin.srcDir(generateBuildConfig)
+}
+
 
 tasks.jar {
     from("LICENSE") {
@@ -96,7 +125,7 @@ tasks.jar {
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
-            artifactId = project.property("archives_base_name") as String
+            artifactId = providers.gradleProperty("archives_base_name").get()
             from(components["java"])
         }
     }

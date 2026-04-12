@@ -14,17 +14,25 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "dev.ilgax.wynnhidepet.client.WynnhidepetClient"
+      {
+        "value": "dev.ilgax.wynnhidepet.client.WynnhidepetClient",
+        "adapter": "kotlin"
+      }
     ],
     "main": [
-      "dev.ilgax.wynnhidepet.Wynnhidepet"
+      {
+        "value": "dev.ilgax.wynnhidepet.Wynnhidepet",
+        "adapter": "kotlin"
+      }
     ],
     "modmenu": [
-      "dev.ilgax.wynnhidepet.client.ModMenuIntegration"
+      {
+        "value": "dev.ilgax.wynnhidepet.client.ModMenuIntegration",
+        "adapter": "kotlin"
+      }
     ]
   },
   "mixins": [
-    "wynnhidepet.mixins.json",
     {
       "config": "wynnhidepet.client.mixins.json",
       "environment": "client"
@@ -33,7 +41,7 @@
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric-language-kotlin": ">=${kotlin_loader_version}",
-    "fabric-api": "*",
+    "fabric-api": ">=0.139.5",
     "minecraft": "${minecraft_version}",
     "cloth-config": ">=21.11.153"
   }
