@@ -1,6 +1,7 @@
 package dev.ilgax.wynnhidepet.client
 
 import com.mojang.brigadier.arguments.IntegerArgumentType
+import dev.ilgax.wynnhidepet.getConfig
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
@@ -9,6 +10,7 @@ import net.minecraft.client.Minecraft
 import net.minecraft.core.particles.ParticleTypes
 import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.network.chat.Component
+import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.Display.TextDisplay
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.Interaction
@@ -171,7 +173,8 @@ object DebugCommand {
             val text = entity.text.string
             sb.appendLine("  [TEXT DISPLAY]")
             sb.appendLine("    Text:            $text")
-            sb.appendLine("    IsPetNametag:    ${isPetNametag(text)}")
+            sb.appendLine("    IsPetNametag:    ${isStrictPetNametag(text)}")
+            sb.appendLine("    IsLenientPet:    ${isLenientPetNametag(text)}")
         }
 
         if (entity is Interaction) {
@@ -193,20 +196,22 @@ object DebugCommand {
         }
     }
 
-    // Helper to check if a nametag contains pet-specific icons or text.
-    private fun isPetNametag(text: String): Boolean {
-        // Strict check: The "Pet" tag sequence (U+E03F, U+E034, U+E043) found in pet nametags.
-        if (text.contains("\uE03F\uE034\uE043")) return true
-        
-        // Fallback for some pets that might use other symbols, 
-        // but strictly EXCLUDE symbols used by NPCs like E055 (inspect) or E050.
-        // Also require it to be multiline to avoid hitting single-line NPC titles.
-        if (text.contains("\n")) {
-            for (c in text) {
-                if (c in '\uE051'..'\uE054' || c in '\uE056'..'\uE05F') return true
-            }
+    private val petSignatureRegex = Regex("\uE03F.{0,3}\uE034.{0,3}\uE043")
+    private val colorCodeRegex = Regex("§.")
+
+    private fun isStrictPetNametag(text: String): Boolean {
+        val clean = text.replace(colorCodeRegex, "")
+        return petSignatureRegex.containsMatchIn(clean)
+    }
+
+    private fun isLenientPetNametag(text: String): Boolean {
+        if (isStrictPetNametag(text)) return true
+        if (!text.contains("\n")) return false
+        val clean = text.replace(colorCodeRegex, "")
+        for (c in clean) {
+            // Match the range used in PetEntityTracker (E051..F8FF, excluding E055/E050)
+            if (c in '\uE051'..'\uE054' || (c >= '\uE056' && c.code < 0xF8FF)) return true
         }
-        
         return false
     }
 
@@ -226,28 +231,30 @@ object DebugCommand {
 
             val interactionAge = interaction.tickCount
             val clusterBox = interaction.boundingBox.inflate(2.0, 5.0, 2.0)
+            val config = getConfig()
 
             val nearby = level.getEntities(interaction, clusterBox) { 
                 it.id != interaction.id && 
                 it !is Player && 
-                kotlin.math.abs(it.tickCount - interactionAge) <= 2
+                kotlin.math.abs(it.tickCount - interactionAge) <= config.clusterAgeTolerance
             }
 
+            val limitSq = config.clusterDistanceLimit * config.clusterDistanceLimit
             val actualPetParts = nearby.filter {
-                it !is TextDisplay || isPetNametag(it.text.string)
+                val dx = it.x - interaction.x
+                val dz = it.z - interaction.z
+                val distSq = dx * dx + dz * dz
+                
+                val inDistance = !config.useClusterDistanceLimit || distSq <= limitSq
+                inDistance && (it !is TextDisplay || isLenientPetNametag(it.text.string))
             }
 
-            val inLobby = player.x > 18000.0 && player.z < 0.0
-            if (!inLobby) {
-                if (actualPetParts.none { it is TextDisplay && isPetNametag(it.text.string) }) {
-                    annotations[interaction.id] = "MISSED — Valid cluster but lacks a pet nametag with strict signature (E03F E034 E043) or multiline icons"
-                    continue
-                }
-            } else {
-                if (actualPetParts.isEmpty()) {
-                    annotations[interaction.id] = "MISSED — Empty cluster"
-                    continue
-                }
+            val hasPetSignature = actualPetParts.any { it is TextDisplay && isStrictPetNametag(it.text.string) }
+            val hasItemDisplay  = actualPetParts.any { it is Display.ItemDisplay }
+
+            if (!hasPetSignature && !hasItemDisplay) {
+                annotations[interaction.id] = "MISSED — Lacks strict signature (E03F E034 E043) AND modern model (ItemDisplay)"
+                continue
             }
 
             annotations[interaction.id] = "DETECTED — Hitbox (age=$interactionAge, parts=${actualPetParts.size})"
@@ -260,7 +267,7 @@ object DebugCommand {
         }
 
         // 3. Fallback: Identify isolated pet nametags (e.g. in Lobby where Interaction hitboxes might be missing)
-        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isPetNametag(it.text.string) }
+        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isStrictPetNametag(it.text.string) }
         for (tag in nametags) {
             if (annotations.containsKey(tag.id)) continue // skip if already found by interaction hitbox
             

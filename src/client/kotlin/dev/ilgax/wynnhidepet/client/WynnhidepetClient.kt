@@ -39,7 +39,8 @@ class WynnhidepetClient : ClientModInitializer {
         }
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
-            val isOnWynncraft = client.currentServer?.ip?.contains("wynncraft", ignoreCase = true) == true
+            val serverIp = client.currentServer?.ip?.lowercase() ?: ""
+            val isOnWynncraft = serverIp.endsWith("wynncraft.com")
             val config = getConfig()
 
             if (isOnWynncraft) {
@@ -55,9 +56,10 @@ class WynnhidepetClient : ClientModInitializer {
 
             while (toggleKey.consumeClick()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
+                val currentConfig = holder.config
 
                 if (!isOnWynncraft) {
-                    if (holder.config.showToggleMessage) {
+                    if (currentConfig.showToggleMessage) {
                         client.player?.displayClientMessage(
                             Component.literal("§cWynnCraft Hide Pets only works on Wynncraft!"),
                             false
@@ -66,15 +68,20 @@ class WynnhidepetClient : ClientModInitializer {
                     continue
                 }
 
-                holder.config.hidePets = !holder.config.hidePets
+                currentConfig.hidePets = !currentConfig.hidePets
                 holder.save()
 
-                // Trigger an immediate update to hide/show pets instantly
-                PetEntityTracker.update(client)
+                if (currentConfig.hidePets) {
+                    // Trigger an immediate update to hide pets instantly
+                    PetEntityTracker.update(client)
+                } else {
+                    // Force clear everything if showing pets
+                    PetEntityTracker.reset()
+                }
 
-                if (holder.config.showToggleMessage) {
+                if (currentConfig.showToggleMessage) {
                     client.player?.displayClientMessage(
-                        Component.literal("§ePets: ${if (holder.config.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
+                        Component.literal("§ePets: ${if (currentConfig.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
                         false
                     )
                 }

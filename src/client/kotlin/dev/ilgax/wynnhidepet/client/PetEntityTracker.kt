@@ -2,6 +2,7 @@ package dev.ilgax.wynnhidepet.client
 
 import dev.ilgax.wynnhidepet.getConfig
 import net.minecraft.client.Minecraft
+import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.Display.TextDisplay
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.Interaction
@@ -12,26 +13,40 @@ import java.util.concurrent.ConcurrentHashMap
 object PetEntityTracker {
 
     val petEntityIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+    
+    
     private val entityExpirations: MutableMap<Int, Long> = HashMap()
+    private val confirmedPetInteractionIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
     private val newIds = HashSet<Int>()
     private var localTick = 0L
 
-    // Helper to check if a nametag contains pet-specific icons or text.
-    private fun isPetNametag(text: String): Boolean {
-        // Strict check: The "Pet" tag sequence (U+E03F, U+E034, U+E043) found in pet nametags.
-        if (text.contains("\uE03F\uE034\uE043")) return true
+    // Strict matching: requires the explicit "Pet" tag sequence (U+E03F, U+E034, U+E043).
+    // Strips Minecraft color codes first to handle colored signatures like §7§f§7.
+    private val petSignatureRegex = Regex("\uE03F.{0,3}\uE034.{0,3}\uE043")
+    private val colorCodeRegex = Regex("§.")
+
+    private fun isStrictPetNametag(text: String): Boolean {
+        val clean = text.replace(colorCodeRegex, "")
+        return petSignatureRegex.containsMatchIn(clean)
+    }
+
+    // Lenient matching: used for entities that are part of a pet-like cluster.
+    // Checks for specific symbols commonly used only in pets/mobs (E051+ range).
+    private fun isLenientPetNametag(text: String): Boolean {
+        if (isStrictPetNametag(text)) return true
         
-        // Fallback for some pets that might use other symbols, 
-        // but strictly EXCLUDE symbols used by NPCs like E055 (inspect) or E050.
-        // Also require it to be multiline to avoid hitting single-line NPC titles.
-        if (text.contains("\n")) {
-            for (c in text) {
-                if (c in '\uE051'..'\uE054' || c in '\uE056'..'\uE05F') return true
-            }
+        // Only allow multiline text to avoid hitting single-line quest NPC titles.
+        if (!text.contains("\n")) return false
+        
+        val clean = text.replace(colorCodeRegex, "")
+        for (c in clean) {
+            // General range of pet icons (hearts, levels, stars)
+            // Strictly exclude E055 (inspect icon used by NPCs) and E050.
+            if (c in '\uE051'..'\uE054' || (c >= '\uE056' && c.code < 0xF8FF)) return true
         }
-        
         return false
     }
+
 
     fun update(client: Minecraft) {
         val updateFreq = getConfig().updateFrequency.coerceAtLeast(1).toLong()
@@ -51,10 +66,12 @@ object PetEntityTracker {
 
         newIds.clear()
 
-        // Use a fixed 48-block radius around the player/camera.
+        // Use configurable search radius.
+        val config = getConfig()
+        val r = config.searchRadius
         val searchBox = net.minecraft.world.phys.AABB(
-            searchPos.x - 48.0, searchPos.y - 48.0, searchPos.z - 48.0,
-            searchPos.x + 48.0, searchPos.y + 48.0, searchPos.z + 48.0
+            searchPos.x - r, searchPos.y - r, searchPos.z - r,
+            searchPos.x + r, searchPos.y + r, searchPos.z + r
         )
         
         val interactions = level.getEntitiesOfClass(Interaction::class.java, searchBox) { true }
@@ -71,22 +88,38 @@ object PetEntityTracker {
             val nearby = level.getEntities(interaction, clusterBox) { 
                 it.id != interaction.id && 
                 it !is Player && 
-                kotlin.math.abs(it.tickCount - interactionAge) <= 2
+                kotlin.math.abs(it.tickCount - interactionAge) <= config.clusterAgeTolerance
             }
 
-            // Refine candidates into confirmed pet parts:
+            // Refine candidates into confirmed pet parts using signatures and icons.
+            // Apply horizontal distance limit to avoid sucking in unrelated world displays (like rewards chests).
+            val limitSq = config.clusterDistanceLimit * config.clusterDistanceLimit
             val confirmedParts = nearby.filter {
-                it !is TextDisplay || isPetNametag(it.text.string)
+                val dx = it.x - interaction.x
+                val dz = it.z - interaction.z
+                val distSq = dx * dx + dz * dz
+                
+                val inDistance = !config.useClusterDistanceLimit || distSq <= limitSq
+                inDistance && (it !is TextDisplay || isLenientPetNametag(it.text.string))
             }
 
             // A valid pet must have at least one component part that is a NAMETAG with a pet symbol.
-            // EXCEPT in the Lobby, where pets don't have nametags. Wynncraft Lobby is at X: 18370, Z: -880
+            // EXCEPT in the Lobby, OR if it's an ID we've already confirmed earlier in this session.
+            val isKnownPet = confirmedPetInteractionIds.contains(interaction.id)
+            val hasPetSignature = confirmedParts.any { it is TextDisplay && isStrictPetNametag(it.text.string) }
+            val hasItemDisplay = confirmedParts.any { it is Display.ItemDisplay }
             val inLobby = searchPos.x > 18000.0 && searchPos.z < 0.0
             
-            if (!inLobby) {
-                if (confirmedParts.none { it is TextDisplay && isPetNametag(it.text.string) }) continue
-            } else {
-                if (confirmedParts.isEmpty()) continue
+            if (hasPetSignature) {
+                confirmedPetInteractionIds.add(interaction.id)
+            }
+
+            if (!inLobby && !hasPetSignature && !isKnownPet) {
+                // Lenient clustering: Only allow if enabled AND it contains an ItemDisplay (modern pet model).
+                // This protects Villagers/NPCs which lack ItemDisplays.
+                if (!config.enableLenientClustering || !hasItemDisplay) continue
+            } else if (confirmedParts.isEmpty() && !inLobby && !isKnownPet) {
+                continue
             }
 
             // Confirmed pet — track the interaction and its specific components recursively.
@@ -96,8 +129,9 @@ object PetEntityTracker {
             }
         }
 
-        // 3. Fallback: Identify isolated pet nametags (e.g. in Lobby)
-        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isPetNametag(it.text.string) }
+        // 3. Fallback: Identify isolated pet nametags (Lobby or faded clusters)
+        // MUST use strict matching here to avoid hiding dungeon mobs with complex health bars.
+        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isStrictPetNametag(it.text.string) }
         for (tag in nametags) {
             if (newIds.contains(tag.id)) continue
             
@@ -114,9 +148,9 @@ object PetEntityTracker {
             }
         }
 
-        // Add detected IDs with a 60-tick (3s) TTL to prevent flickering
+        // Add detected IDs with configurable TTL
         for (id in newIds) {
-            entityExpirations[id] = localTick + 60
+            entityExpirations[id] = localTick + config.memoryDurationTicks
         }
 
         // Clean up expired IDs
@@ -124,6 +158,7 @@ object PetEntityTracker {
         while (iterator.hasNext()) {
             val entry = iterator.next()
             if (entry.value < localTick) {
+                confirmedPetInteractionIds.remove(entry.key)
                 iterator.remove()
             }
         }
@@ -133,6 +168,7 @@ object PetEntityTracker {
         petEntityIds.removeIf { it !in currentKeys }
         petEntityIds.addAll(currentKeys)
     }
+
 
     private fun isSafeToHide(entity: Entity?): Boolean {
         if (entity == null) return false
@@ -150,6 +186,7 @@ object PetEntityTracker {
     fun reset() {
         petEntityIds.clear()
         entityExpirations.clear()
+        confirmedPetInteractionIds.clear()
         newIds.clear()
         localTick = 0
     }
