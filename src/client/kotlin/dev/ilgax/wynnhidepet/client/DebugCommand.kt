@@ -24,7 +24,7 @@ import kotlin.math.sqrt
 
 object DebugCommand {
 
-    private const val DEFAULT_RADIUS = 10
+    private const val DEFAULT_RADIUS = 8
 
     private var ticksRemaining = 0   // >0: collecting, <0: visual-only ring, 0: inactive
     private var searchRadius = DEFAULT_RADIUS.toDouble()
@@ -35,6 +35,7 @@ object DebugCommand {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
             dispatcher.register(
                 literal("whp")
+                    .requires { getConfig().enableDebugTools }
                     .then(
                         literal("debug")
                             .executes { ctx ->

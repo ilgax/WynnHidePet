@@ -1,7 +1,6 @@
 package dev.ilgax.wynnhidepet.client
 
 import com.mojang.blaze3d.platform.InputConstants
-import dev.ilgax.wynnhidepet.BuildConstants
 import dev.ilgax.wynnhidepet.ModConfig
 import dev.ilgax.wynnhidepet.getConfig
 import me.shedaniel.autoconfig.AutoConfig
@@ -34,9 +33,7 @@ class WynnhidepetClient : ClientModInitializer {
     private var ticks = 0
 
     override fun onInitializeClient() {
-        if (BuildConstants.DEBUG) {
-            DebugCommand.register()
-        }
+        DebugCommand.register()
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             val serverIp = client.currentServer?.ip?.lowercase() ?: ""
@@ -50,9 +47,7 @@ class WynnhidepetClient : ClientModInitializer {
                 }
             }
 
-            if (BuildConstants.DEBUG) {
-                DebugCommand.tick(client)
-            }
+            DebugCommand.tick(client)
 
             while (toggleKey.consumeClick()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)

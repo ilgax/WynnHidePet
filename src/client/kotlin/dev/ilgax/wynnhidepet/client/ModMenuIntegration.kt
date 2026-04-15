@@ -103,6 +103,14 @@ class ModMenuIntegration : ModMenuApi {
                     .build()
             )
 
+            experimentalCategory.addEntry(
+                entryBuilder.startBooleanToggle(Component.literal("Enable Debug Tools"), config.enableDebugTools)
+                    .setDefaultValue(false)
+                    .setTooltip(Component.literal("Allows using the /whp debug command to collect entity data."))
+                    .setSaveConsumer { config.enableDebugTools = it }
+                    .build()
+            )
+
             builder.setSavingRunnable {
                 AutoConfig.getConfigHolder(ModConfig::class.java).save()
             }

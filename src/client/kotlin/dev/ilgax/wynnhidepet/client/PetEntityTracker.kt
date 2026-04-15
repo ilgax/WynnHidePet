@@ -78,8 +78,8 @@ object PetEntityTracker {
 
         for (interaction in interactions) {
             // Pet interaction hitboxes (approx 0.6x0.9 up to 1.0x2.0 for vybels/moths)
-            if (interaction.bbWidth < 0.2f || interaction.bbWidth > 1.2f) continue
-            if (interaction.bbHeight < 0.4f || interaction.bbHeight > 2.5f) continue
+            if (interaction.bbWidth !in 0.2f..1.2f) continue
+            if (interaction.bbHeight !in 0.4f..2.5f) continue
 
             val interactionAge = interaction.tickCount
             val clusterBox = interaction.boundingBox.inflate(2.0, 5.0, 2.0)

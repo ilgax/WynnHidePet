@@ -4,5 +4,7 @@
     "text.autoconfig.wynnhidepet.title": "WynnCraft Hide Pets Config",
     "text.autoconfig.wynnhidepet.option.hidePets": "Hide Pets",
     "text.autoconfig.wynnhidepet.option.showToggleMessage": "Show Toggle Message",
-    "text.autoconfig.wynnhidepet.option.updateFrequency": "Update Frequency (ticks) 20 = 1 second"
+    "text.autoconfig.wynnhidepet.option.updateFrequency": "Update Frequency (ticks) 20 = 1 second",
+    "text.autoconfig.wynnhidepet.option.enableDebugTools": "Enable Debug Tools (/whp debug)",
+    "text.autoconfig.wynnhidepet.option.enableDebugTools.tooltip": "Allows using the /whp debug command to collect entity data."
 }

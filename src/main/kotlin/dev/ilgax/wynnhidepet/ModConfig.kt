@@ -15,6 +15,7 @@ class ModConfig : ConfigData {
     var clusterDistanceLimit: Double = 1.2
     var useClusterDistanceLimit: Boolean = false
     var clusterAgeTolerance: Int = 5
+    var enableDebugTools: Boolean = false
 
     override fun validatePostLoad() {
         updateFrequency = updateFrequency.coerceAtLeast(1)
