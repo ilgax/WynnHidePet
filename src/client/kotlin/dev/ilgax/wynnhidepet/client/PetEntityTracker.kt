@@ -2,166 +2,173 @@ package dev.ilgax.wynnhidepet.client
 
 import dev.ilgax.wynnhidepet.getConfig
 import net.minecraft.client.Minecraft
+import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.Display.TextDisplay
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.Interaction
+import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.entity.decoration.ArmorStand
 import net.minecraft.world.entity.player.Player
-import net.minecraft.world.phys.Vec3
+import net.minecraft.world.phys.AABB
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Finds pets by their nametag's [pet] badge, then collects the rest of the pet from the entity IDs
+ * Wynncraft allocated together with that nametag. Three layouts have been observed:
+ *
+ *   model before nametag:  root ItemDisplay R, its N ItemDisplay passengers, nametag (R+N+1), hitbox (R+N+2)
+ *   model after nametag:   nametag, invisible ArmorStand / ItemDisplay parts (IDs may skip), hitbox
+ *   ridden mob:            a mob (e.g. a creeper) carrying the nametag as a passenger
+ *
+ * Only entities inside those runs are collected, so mobs, NPCs or combat dummies standing next to a
+ * pet can't be pulled in, no matter how close they are or when the client loaded them.
+ */
 object PetEntityTracker {
 
     val petEntityIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
-    
-    
+
+    /** Names shown on pet nametags (the text before the first pill), used to recognise pet chat. */
+    val knownPetNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     private val entityExpirations: MutableMap<Int, Long> = HashMap()
-    private val confirmedPetInteractionIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
     private val newIds = HashSet<Int>()
     private var localTick = 0L
 
-    // Strict matching: requires the explicit "Pet" tag sequence (U+E03F, U+E034, U+E043).
-    // Strips Minecraft color codes first to handle colored signatures like §7§f§7.
-    private val petSignatureRegex = Regex("\uE03F.{0,3}\uE034.{0,3}\uE043")
+    // Nametag labels use Wynncraft's banner "pill" font: U+E060 opens a pill, U+E030..U+E049 are a..z
+    // and U+E062 closes it. Every pet nametag carries an exact [pet] pill; mobs carry [lv] only.
+    private const val PET_BADGE = "\uE060\uE03F\uE034\uE043\uE062"
     private val colorCodeRegex = Regex("§.")
 
-    private fun isStrictPetNametag(text: String): Boolean {
-        val clean = text.replace(colorCodeRegex, "")
-        return petSignatureRegex.containsMatchIn(clean)
+    // Largest observed model is 37 parts; leave room for bigger pets.
+    private const val MAX_MODEL_IDS = 128
+    // The armor stand model skips every other ID.
+    private const val MAX_ID_GAP = 3
+
+    class PetAssembly(val ids: Set<Int>, val anchorId: Int, val reason: String)
+
+    fun isPetNametag(text: String): Boolean {
+        // Glyphs are separated by supplementary-plane spacer characters (e.g. U+CFFFF); drop them first.
+        val clean = StringBuilder(text.length)
+        text.replace(colorCodeRegex, "").codePoints().forEach { if (it <= 0xFFFF) clean.appendCodePoint(it) }
+        return clean.contains(PET_BADGE)
     }
 
-    // Lenient matching: used for entities that are part of a pet-like cluster.
-    // Checks for specific symbols commonly used only in pets/mobs (E051+ range).
-    private fun isLenientPetNametag(text: String): Boolean {
-        if (isStrictPetNametag(text)) return true
-        
-        // Only allow multiline text to avoid hitting single-line quest NPC titles.
-        if (!text.contains("\n")) return false
-        
-        val clean = text.replace(colorCodeRegex, "")
-        for (c in clean) {
-            // General range of pet icons (hearts, levels, stars)
-            // Strictly exclude E055 (inspect icon used by NPCs) and E050.
-            if (c in '\uE051'..'\uE054' || (c >= '\uE056' && c.code < 0xF8FF)) return true
+    fun findPets(level: ClientLevel, searchBox: AABB, allowUntagged: Boolean): List<PetAssembly> {
+        val pets = ArrayList<PetAssembly>()
+
+        for (tag in level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isPetNametag(it.text.string) }) {
+            val name = tag.text.string.replace(colorCodeRegex, "").substringBefore('\uE060').trim()
+            if (name.isNotEmpty()) knownPetNames.add(name)
+
+            val ids = HashSet<Int>()
+            ids.add(tag.id)
+            val reason = when {
+                collectRiddenMob(tag, ids) -> "nametag rides pet mob"
+                collectModelBefore(level, tag.id, ids) -> {
+                    (level.getEntity(tag.id + 1) as? Interaction)?.let { ids.add(it.id) }
+                    "model before nametag"
+                }
+                collectModelAfter(level, tag.id, ids) -> "model after nametag"
+                else -> "nametag only"
+            }
+            pets.add(PetAssembly(ids, tag.id, reason))
+        }
+
+        // Nametag not loaded (out of range, or lagging behind its hitbox): accept a hitbox only if the
+        // model run directly precedes the missing nametag slot.
+        if (allowUntagged) {
+            for (hitbox in level.getEntitiesOfClass(Interaction::class.java, searchBox) { true }) {
+                if (level.getEntity(hitbox.id - 1) != null) continue
+                val ids = HashSet<Int>()
+                if (!collectModelBefore(level, hitbox.id - 1, ids)) continue
+                // Some world objects put their nametag *before* the model; such a model isn't a pet's.
+                if (level.getEntity(ids.min() - 1) is TextDisplay) continue
+                ids.add(hitbox.id)
+                pets.add(PetAssembly(ids, hitbox.id, "hitbox after model, nametag not loaded"))
+            }
+        }
+
+        return pets
+    }
+
+    /** The nametag rides the pet itself, e.g. the Veteran Creeper. */
+    private fun collectRiddenMob(tag: TextDisplay, out: MutableSet<Int>): Boolean {
+        val mob = tag.vehicle
+        if (mob !is LivingEntity || mob is Player) return false
+        addWithPassengers(mob, out)
+        return true
+    }
+
+    /** Adds the ItemDisplay model ending right before [nametagId]; returns false if the layout doesn't match. */
+    private fun collectModelBefore(level: ClientLevel, nametagId: Int, out: MutableSet<Int>): Boolean {
+        val last = level.getEntity(nametagId - 1) ?: return false
+        val root = last.vehicle ?: last
+        if (root !is Display.ItemDisplay || root.vehicle != null) return false
+        if (root.id + root.passengers.size + 1 != nametagId) return false
+        if (root.passengers.any { it !is Display.ItemDisplay || it.id !in root.id + 1 until nametagId }) return false
+
+        out.add(root.id)
+        root.passengers.forEach { out.add(it.id) }
+        return true
+    }
+
+    /**
+     * Adds model parts following the nametag up to and including the first hitbox, e.g. the Heroes Guide.
+     * Any other kind of entity in between means the run isn't this pet's, and nothing is added.
+     */
+    private fun collectModelAfter(level: ClientLevel, nametagId: Int, out: MutableSet<Int>): Boolean {
+        val parts = ArrayList<Entity>()
+        var gap = 0
+        for (id in nametagId + 1..nametagId + MAX_MODEL_IDS) {
+            val entity = level.getEntity(id)
+            when {
+                entity == null -> if (++gap > MAX_ID_GAP) return false
+                entity is Interaction -> {
+                    if (parts.isEmpty()) return false
+                    parts.forEach { addWithPassengers(it, out) }
+                    out.add(entity.id)
+                    return true
+                }
+                entity is Display.ItemDisplay || (entity is ArmorStand && entity.isInvisible) -> {
+                    parts.add(entity)
+                    gap = 0
+                }
+                else -> return false
+            }
         }
         return false
     }
 
+    private fun addWithPassengers(entity: Entity, out: MutableSet<Int>) {
+        if (entity is Player) return
+        out.add(entity.id)
+        entity.passengers.forEach { addWithPassengers(it, out) }
+    }
 
     fun update(client: Minecraft) {
-        val updateFreq = getConfig().updateFrequency.coerceAtLeast(1).toLong()
-        localTick += updateFreq
-        if (!getConfig().hidePets) {
+        val config = getConfig()
+        localTick += config.updateFrequency.coerceAtLeast(1).toLong()
+        // Sound and chat filtering need pet positions and names even while the pets themselves are shown.
+        if (!config.hidePets && !config.hidePetSounds && !config.hidePetChat) {
             petEntityIds.clear()
             entityExpirations.clear()
             return
         }
         val level = client.level ?: return
-        
-        // In the Lobby/Start Screen, client.player might be null. 
-        // We fallback to camera position if available.
-        val searchPos: Vec3 = client.player?.position() 
-            //?: client.gameRenderer.mainCamera.position
-            ?: return
+        val player = client.player ?: return
 
         newIds.clear()
-
-        // Use configurable search radius.
-        val config = getConfig()
-        val r = config.searchRadius
-        val searchBox = net.minecraft.world.phys.AABB(
-            searchPos.x - r, searchPos.y - r, searchPos.z - r,
-            searchPos.x + r, searchPos.y + r, searchPos.z + r
-        )
-        
-        val interactions = level.getEntitiesOfClass(Interaction::class.java, searchBox) { true }
-
-        for (interaction in interactions) {
-            // Pet interaction hitboxes (approx 0.6x0.9 up to 1.0x2.0 for vybels/moths)
-            if (interaction.bbWidth !in 0.2f..1.2f) continue
-            if (interaction.bbHeight !in 0.4f..2.5f) continue
-
-            val interactionAge = interaction.tickCount
-            val clusterBox = interaction.boundingBox.inflate(2.0, 5.0, 2.0)
-
-            // 1. Surgical search: Find potential components based on strict Age match (+/- 2 ticks).
-            val nearby = level.getEntities(interaction, clusterBox) { 
-                it.id != interaction.id && 
-                it !is Player && 
-                kotlin.math.abs(it.tickCount - interactionAge) <= config.clusterAgeTolerance
-            }
-
-            // Refine candidates into confirmed pet parts using signatures and icons.
-            // Apply horizontal distance limit to avoid sucking in unrelated world displays (like rewards chests).
-            val limitSq = config.clusterDistanceLimit * config.clusterDistanceLimit
-            val confirmedParts = nearby.filter {
-                val dx = it.x - interaction.x
-                val dz = it.z - interaction.z
-                val distSq = dx * dx + dz * dz
-                
-                val inDistance = !config.useClusterDistanceLimit || distSq <= limitSq
-                inDistance && (it !is TextDisplay || isLenientPetNametag(it.text.string))
-            }
-
-            // A valid pet must have at least one component part that is a NAMETAG with a pet symbol.
-            // EXCEPT in the Lobby, OR if it's an ID we've already confirmed earlier in this session.
-            val isKnownPet = confirmedPetInteractionIds.contains(interaction.id)
-            val hasPetSignature = confirmedParts.any { it is TextDisplay && isStrictPetNametag(it.text.string) }
-            val hasItemDisplay = confirmedParts.any { it is Display.ItemDisplay }
-            val inLobby = searchPos.x > 18000.0 && searchPos.z < 0.0
-            
-            if (hasPetSignature) {
-                confirmedPetInteractionIds.add(interaction.id)
-            }
-
-            if (!inLobby && !hasPetSignature && !isKnownPet) {
-                // Lenient clustering: Only allow if enabled AND it contains an ItemDisplay (modern pet model).
-                // This protects Villagers/NPCs which lack ItemDisplays.
-                if (!config.enableLenientClustering || !hasItemDisplay) continue
-            } else if (confirmedParts.isEmpty() && !inLobby && !isKnownPet) {
-                continue
-            }
-
-            // Confirmed pet — track the interaction and its specific components recursively.
-            newIds.add(interaction.id)
-            for (entity in confirmedParts) {
-                addAllPassengersRecursive(entity, newIds)
-            }
+        val searchBox = player.boundingBox.inflate(config.searchRadius)
+        for (pet in findPets(level, searchBox, config.enableLenientClustering)) {
+            newIds.addAll(pet.ids)
         }
 
-        // 3. Fallback: Identify isolated pet nametags (Lobby or faded clusters)
-        // MUST use strict matching here to avoid hiding dungeon mobs with complex health bars.
-        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isStrictPetNametag(it.text.string) }
-        for (tag in nametags) {
-            if (newIds.contains(tag.id)) continue
-            
-            // Search upwards to find the root of the pet assembly.
-            var root: Entity = tag
-            while (root.vehicle != null && isSafeToHide(root.vehicle)) {
-                root = root.vehicle!!
-                newIds.add(root.id)
-            }
-            // Once we have the root, hide everything in that branch if it's not an NPC.
-            if (isSafeToHide(root)) {
-                newIds.add(tag.id)
-                addAllPassengersRecursive(root, newIds)
-            }
-        }
-
-        // Add detected IDs with configurable TTL
+        // Remember detected IDs for a while so pets don't flicker when a nametag briefly drops out.
         for (id in newIds) {
             entityExpirations[id] = localTick + config.memoryDurationTicks
         }
-
-        // Clean up expired IDs
-        val iterator = entityExpirations.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (entry.value < localTick) {
-                confirmedPetInteractionIds.remove(entry.key)
-                iterator.remove()
-            }
-        }
+        entityExpirations.entries.removeIf { it.value < localTick }
 
         // Sync the public set for the renderer and interaction mixins
         val currentKeys = entityExpirations.keys
@@ -169,24 +176,9 @@ object PetEntityTracker {
         petEntityIds.addAll(currentKeys)
     }
 
-
-    private fun isSafeToHide(entity: Entity?): Boolean {
-        if (entity == null) return false
-        return entity !is Player
-    }
-
-    private fun addAllPassengersRecursive(entity: Entity, set: MutableSet<Int>) {
-        if (!isSafeToHide(entity)) return
-        set.add(entity.id)
-        for (passenger in entity.passengers) {
-            addAllPassengersRecursive(passenger, set)
-        }
-    }
-
     fun reset() {
         petEntityIds.clear()
         entityExpirations.clear()
-        confirmedPetInteractionIds.clear()
         newIds.clear()
         localTick = 0
     }

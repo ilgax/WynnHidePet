@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.minecraft.client.KeyMapping
+import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
 import org.lwjgl.glfw.GLFW
@@ -31,13 +32,22 @@ class WynnhidepetClient : ClientModInitializer {
     }
 
     private var ticks = 0
+    private var lastLevel: ClientLevel? = null
 
     override fun onInitializeClient() {
         DebugCommand.register()
+        PetChatFilter.register()
+        DebugOverlay.register()
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
-            val serverIp = client.currentServer?.ip?.lowercase() ?: ""
-            val isOnWynncraft = serverIp.endsWith("wynncraft.com")
+            // Wynncraft moves players between worlds (class select, world hops, housing) without
+            // disconnecting; IDs remembered from the old world must not hide entities in the new one.
+            if (client.level !== lastLevel) {
+                lastLevel = client.level
+                PetEntityTracker.reset()
+            }
+
+            val isOnWynncraft = Wynncraft.isConnected(client)
             val config = getConfig()
 
             if (isOnWynncraft) {
@@ -48,6 +58,7 @@ class WynnhidepetClient : ClientModInitializer {
             }
 
             DebugCommand.tick(client)
+            PetEffectFilter.releaseHeldSounds(client)
 
             while (toggleKey.consumeClick()) {
                 val holder = AutoConfig.getConfigHolder(ModConfig::class.java)

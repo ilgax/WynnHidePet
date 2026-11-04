@@ -9,7 +9,9 @@ import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
 import net.minecraft.client.Minecraft
 import net.minecraft.core.particles.ParticleTypes
 import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
+import net.minecraft.network.chat.HoverEvent
 import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.Display.TextDisplay
 import net.minecraft.world.entity.Entity
@@ -29,6 +31,7 @@ object DebugCommand {
     private var ticksRemaining = 0   // >0: collecting, <0: visual-only ring, 0: inactive
     private var searchRadius = DEFAULT_RADIUS.toDouble()
     private val entitySnapshots = LinkedHashMap<Int, String>()
+    private val packetLog = ArrayList<String>()
     private var localTick = 0
 
     fun register() {
@@ -78,9 +81,9 @@ object DebugCommand {
             collectSnapshot(client)
 
             if (ticksRemaining == 0) {
-                writeFile(client)
+                val file = writeFile(client)
                 client.player?.displayClientMessage(
-                    Component.literal("§aDebug session complete. Written to wynnhidepet-debug-*.txt"),
+                    Component.literal("§aDebug session complete. Written to ").append(fileLink(file)),
                     false
                 )
             }
@@ -92,13 +95,26 @@ object DebugCommand {
         searchRadius = radius
         ticksRemaining = 0
         collectSnapshot(source.client)
-        writeFile(source.client)
-        source.sendFeedback(Component.literal("§aSnapshot written to wynnhidepet-debug-*.txt (radius ${radius.toInt()}b)"))
+        val file = writeFile(source.client)
+        source.sendFeedback(
+            Component.literal("§aSnapshot written to ").append(fileLink(file))
+                .append(Component.literal(" §a(radius ${radius.toInt()}b)"))
+        )
         ticksRemaining = -60 // show ring for exactly 3 seconds
+    }
+
+    /** Seconds left in the running timed capture, or null if none is running. */
+    val captureSecondsLeft: Int?
+        get() = if (ticksRemaining > 0) (ticksRemaining + 19) / 20 else null
+
+    /** Records a sound/particle packet while a timed capture is running; [line] is only built then. */
+    fun recordPacket(line: () -> String) {
+        if (ticksRemaining > 0) packetLog.add("t=$localTick ${line()}")
     }
 
     private fun beginTimed(source: FabricClientCommandSource, seconds: Int, radius: Double) {
         entitySnapshots.clear()
+        packetLog.clear()
         searchRadius = radius
         ticksRemaining = seconds * 20
         source.sendFeedback(
@@ -154,6 +170,7 @@ object DebugCommand {
         sb.appendLine("    BoundingBox:     ${entity.boundingBox}")
         sb.appendLine("    Width:           ${entity.bbWidth}")
         sb.appendLine("    Height:          ${entity.bbHeight}")
+        sb.appendLine("    IsInvisible:     ${entity.isInvisible}")
 
         sb.appendLine("  [NAMES]")
         sb.appendLine("    Name:            ${entity.name.string}")
@@ -174,8 +191,7 @@ object DebugCommand {
             val text = entity.text.string
             sb.appendLine("  [TEXT DISPLAY]")
             sb.appendLine("    Text:            $text")
-            sb.appendLine("    IsPetNametag:    ${isStrictPetNametag(text)}")
-            sb.appendLine("    IsLenientPet:    ${isLenientPetNametag(text)}")
+            sb.appendLine("    IsPetNametag:    ${PetEntityTracker.isPetNametag(text)}")
         }
 
         if (entity is Interaction) {
@@ -197,104 +213,27 @@ object DebugCommand {
         }
     }
 
-    private val petSignatureRegex = Regex("\uE03F.{0,3}\uE034.{0,3}\uE043")
-    private val colorCodeRegex = Regex("§.")
-
-    private fun isStrictPetNametag(text: String): Boolean {
-        val clean = text.replace(colorCodeRegex, "")
-        return petSignatureRegex.containsMatchIn(clean)
-    }
-
-    private fun isLenientPetNametag(text: String): Boolean {
-        if (isStrictPetNametag(text)) return true
-        if (!text.contains("\n")) return false
-        val clean = text.replace(colorCodeRegex, "")
-        for (c in clean) {
-            // Match the range used in PetEntityTracker (E051..F8FF, excluding E055/E050)
-            if (c in '\uE051'..'\uE054' || (c >= '\uE056' && c.code < 0xF8FF)) return true
-        }
-        return false
-    }
-
     private fun buildAnnotations(client: Minecraft): Map<Int, String> {
         val level = client.level ?: return emptyMap()
         val player = client.player ?: return emptyMap()
         val annotations = mutableMapOf<Int, String>()
         val searchBox = player.boundingBox.inflate(searchRadius)
 
-        val interactions = level.getEntitiesOfClass(Interaction::class.java, searchBox) { true }
-
-        for (interaction in interactions) {
-            if (interaction.bbWidth < 0.2f || interaction.bbWidth > 1.2f || interaction.bbHeight < 0.4f || interaction.bbHeight > 2.5f) {
-                annotations[interaction.id] = "IGNORED — Dimension mismatch (${fmt(interaction.bbWidth.toDouble())}x${fmt(interaction.bbHeight.toDouble())})"
-                continue
+        for (pet in PetEntityTracker.findPets(level, searchBox, getConfig().enableLenientClustering)) {
+            for (id in pet.ids) {
+                annotations[id] = "DETECTED — Part of pet ${pet.anchorId} (${pet.reason}, ${pet.ids.size} entities)"
             }
-
-            val interactionAge = interaction.tickCount
-            val clusterBox = interaction.boundingBox.inflate(2.0, 5.0, 2.0)
-            val config = getConfig()
-
-            val nearby = level.getEntities(interaction, clusterBox) { 
-                it.id != interaction.id && 
-                it !is Player && 
-                kotlin.math.abs(it.tickCount - interactionAge) <= config.clusterAgeTolerance
-            }
-
-            val limitSq = config.clusterDistanceLimit * config.clusterDistanceLimit
-            val actualPetParts = nearby.filter {
-                val dx = it.x - interaction.x
-                val dz = it.z - interaction.z
-                val distSq = dx * dx + dz * dz
-                
-                val inDistance = !config.useClusterDistanceLimit || distSq <= limitSq
-                inDistance && (it !is TextDisplay || isLenientPetNametag(it.text.string))
-            }
-
-            val hasPetSignature = actualPetParts.any { it is TextDisplay && isStrictPetNametag(it.text.string) }
-            val hasItemDisplay  = actualPetParts.any { it is Display.ItemDisplay }
-
-            if (!hasPetSignature && !hasItemDisplay) {
-                annotations[interaction.id] = "MISSED — Lacks strict signature (E03F E034 E043) AND modern model (ItemDisplay)"
-                continue
-            }
-
-            annotations[interaction.id] = "DETECTED — Hitbox (age=$interactionAge, parts=${actualPetParts.size})"
-
-            for (entity in actualPetParts) {
-                val reason = if (entity is TextDisplay) "Age+Signature match" else "Age match $interactionAge"
-                annotations[entity.id] = "DETECTED — Component ($reason, interaction=${interaction.id})"
-                annotatePassengersRecursive(entity, annotations, interaction.id)
-            }
-        }
-
-        // 3. Fallback: Identify isolated pet nametags (e.g. in Lobby where Interaction hitboxes might be missing)
-        val nametags = level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isStrictPetNametag(it.text.string) }
-        for (tag in nametags) {
-            if (annotations.containsKey(tag.id)) continue // skip if already found by interaction hitbox
-            
-            annotations[tag.id] = "DETECTED — Fallback (Isolated Pet Nametag)"
-            var root: Entity = tag
-            while (root.vehicle != null && root.vehicle !is Player) {
-                root = root.vehicle!!
-                annotations[root.id] = "DETECTED — Fallback Vehicle of ${tag.id}"
-            }
-            if (root !is Player) {
-                annotatePassengersRecursive(root, annotations, -1)
+            // A badge nametag with no recognised layout around it means Wynncraft built this pet differently.
+            if (pet.ids.size == 1) {
+                annotations[pet.anchorId] = "MISSED — Pet nametag, but no known model layout around its ID"
             }
         }
 
         return annotations
     }
 
-    private fun annotatePassengersRecursive(entity: Entity, annotations: MutableMap<Int, String>, interactionId: Int) {
-        for (passenger in entity.passengers) {
-            annotations[passenger.id] = "DETECTED — Passenger of component ${entity.id} (interaction=$interactionId)"
-            annotatePassengersRecursive(passenger, annotations, interactionId)
-        }
-    }
-
-    private fun writeFile(client: Minecraft) {
-        val player = client.player ?: return
+    private fun writeFile(client: Minecraft): File? {
+        val player = client.player ?: return null
         val now = LocalDateTime.now()
         val timestamp = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
         
@@ -338,6 +277,13 @@ object DebugCommand {
             w.appendLine("=".repeat(60))
             w.newLine()
 
+            if (packetLog.isNotEmpty()) {
+                w.appendLine("── SOUND / PARTICLE PACKETS (${packetLog.size}) ───────────────────")
+                packetLog.forEach { w.appendLine("  $it") }
+                w.appendLine("=".repeat(60))
+                w.newLine()
+            }
+
             entitySnapshots.forEach { (id, snapshot) ->
                 val annotation = annotations[id]
                 if (annotation != null) {
@@ -353,6 +299,18 @@ object DebugCommand {
         }
 
         entitySnapshots.clear()
+        packetLog.clear()
+        return file
+    }
+
+    /** The file's name, underlined; clicking it opens the file. */
+    private fun fileLink(file: File?): Component {
+        if (file == null) return Component.literal("§cnothing (no player)")
+        return Component.literal(file.name).withStyle { style ->
+            style.withUnderlined(true)
+                .withClickEvent(ClickEvent.OpenFile(file))
+                .withHoverEvent(HoverEvent.ShowText(Component.literal("Open ${file.absolutePath}")))
+        }
     }
 
     private fun fmt(d: Double) = String.format("%.3f", d)

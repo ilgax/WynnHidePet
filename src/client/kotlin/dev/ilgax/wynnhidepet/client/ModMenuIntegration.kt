@@ -70,43 +70,33 @@ class ModMenuIntegration : ModMenuApi {
             category.addEntry(
                 entryBuilder.startBooleanToggle(Component.literal("Enable Lenient Clustering"), config.enableLenientClustering)
                     .setDefaultValue(true)
-                    .setTooltip(Component.literal("Allow hiding pets without visible nametags if their model matches"))
+                    .setTooltip(Component.literal("Also hide pets whose nametag hasn't loaded yet, if their hitbox directly follows their model"))
                     .setSaveConsumer { config.enableLenientClustering = it }
                     .build()
             )
 
             category.addEntry(
-                entryBuilder.startIntSlider(Component.literal("Cluster Age Tolerance"), config.clusterAgeTolerance, 0, 60)
-                    .setDefaultValue(5)
-                    .setTooltip(Component.literal("Max age difference in ticks between hitbox and parts. Increase if pets still show up during lag."))
-                    .setSaveConsumer { config.clusterAgeTolerance = it }
+                entryBuilder.startBooleanToggle(Component.literal("Hide Pet Chat"), config.hidePetChat)
+                    .setDefaultValue(false)
+                    .setTooltip(Component.literal("Hide pet chat messages and level-ups, even while pets are shown"))
+                    .setSaveConsumer { config.hidePetChat = it }
+                    .build()
+            )
+
+            category.addEntry(
+                entryBuilder.startBooleanToggle(Component.literal("Hide Pet Sounds"), config.hidePetSounds)
+                    .setDefaultValue(false)
+                    .setTooltip(Component.literal("Mute sounds pets make, even while pets are shown"))
+                    .setSaveConsumer { config.hidePetSounds = it }
                     .build()
             )
 
             // --- Experimental Category ---
 
             experimentalCategory.addEntry(
-                entryBuilder.startBooleanToggle(Component.literal("Use Distance Limit"), config.useClusterDistanceLimit)
-                    .setDefaultValue(false)
-                    .setTooltip(Component.literal("Restrict pet components to a specific horizontal radius. Experimental: May cause missed pets if they lag far behind their hitboxes."))
-                    .setSaveConsumer { config.useClusterDistanceLimit = it }
-                    .build()
-            )
-
-            experimentalCategory.addEntry(
-                entryBuilder.startDoubleField(Component.literal("Cluster Distance Limit"), config.clusterDistanceLimit)
-                    .setDefaultValue(1.2)
-                    .setMin(0.1)
-                    .setMax(5.0)
-                    .setTooltip(Component.literal("Max horizontal distance between hitbox and pet components."))
-                    .setSaveConsumer { config.clusterDistanceLimit = it }
-                    .build()
-            )
-
-            experimentalCategory.addEntry(
                 entryBuilder.startBooleanToggle(Component.literal("Enable Debug Tools"), config.enableDebugTools)
                     .setDefaultValue(false)
-                    .setTooltip(Component.literal("Allows using the /whp debug command to collect entity data."))
+                    .setTooltip(Component.literal("Shows what the mod intercepts in an on-screen feed, and enables the /whp debug command."))
                     .setSaveConsumer { config.enableDebugTools = it }
                     .build()
             )
