@@ -2,15 +2,15 @@
 
 A client-side Fabric mod for Minecraft **1.21.11** that hides pets on Wynncraft, both yours and other players', so they don't block your view. You keep your pet perks without a pet in your face.
 
-It only does anything while you're connected to Wynncraft.
+It only works while you're connected to Wynncraft.
 
 ## Features
 
-- **Hide pets**: models, nametags and hitboxes, at any distance and the moment they load. Press **`H`** to toggle.
-- **Click through pets**: attacks and right-clicks go to whatever is behind a hidden pet.
-- **Hide pet chat**: hides pet chatter (`Myhsin: tsss`) and pet level-ups. Works while pets are shown too.
-- **Mute pet sounds**: mutes the noises pets make. Works while pets are shown too.
-- **Hides only pets**: mobs, NPCs and combat dummies standing next to a pet stay visible.
+- **Hide pets**: Models, nametags and hitboxes, at any distance and the moment they load. Press **`H`** to toggle.
+- **Click through pets**: Attacks and right-clicks will go through hidden pets to whatever is behind them.
+- **Hide pet chat**: Hides pet chat messages. Works while pets are shown too.
+- **Mute pet sounds**: Mutes the noises pets make. Works while pets are shown too.
+- **Hides only pets**: Mobs, NPCs and combat dummies standing next to a pet remain visible.
 
 ## Settings
 
@@ -20,9 +20,9 @@ Open them through [Mod Menu](https://modrinth.com/mod/modmenu).
 |---|---|---|
 | Hide Pets | off | Hide pets (same as pressing `H`) |
 | Show Toggle Message | on | Popup (toast) when pressing `H` |
-| Hide Pet Chat | off | Hide pet chat lines and level-ups |
+| Hide Pet Chat | off | Hide pet chat messages |
 | Hide Pet Sounds | off | Mute sounds pets make |
-| Enable Debug Tools *(Experimental)* | off | On-screen feed of what the mod hides or mutes, and the `/whp debug` command |
+| Enable Debug Tools | off | On-screen feed of what the mod hides or mutes, and the `/whp debug` command |
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Open them through [Mod Menu](https://modrinth.com/mod/modmenu).
 - [Cloth Config API](https://modrinth.com/mod/cloth-config)
 - [Mod Menu](https://modrinth.com/mod/modmenu) (optional, for the settings screen)
 
-Any 1.21.11 version of Fabric API and Cloth Config works; Fabric Language Kotlin needs Kotlin 2.3 or newer.
+Any 1.21.11 version of Fabric API and Cloth Config works, Fabric Language Kotlin needs Kotlin 2.3 or newer.
 
 ## A pet isn't hidden, or something else is
 
@@ -56,32 +56,6 @@ A scan runs at the end of the tick a text display or hitbox spawns and again on 
 
 Pet chat lines start with Wynncraft's pet chat icon (`U+E016`); follow-up lines are matched by the previous line or the pet's name. Pet sounds are recognised by playing right on a pet, or by arriving together with a pet chat line.
 
-## Development
-
-```bash
-./gradlew build
-```
-
-The jar ends up in `build/libs/`.
-
-### Releasing
-
-Bump `mod_version` in `gradle.properties` (e.g. `1.1.5+1.21.11`), commit, then push a matching tag without the Minecraft version:
-
-```bash
-git tag v1.1.5
-git push origin v1.1.5
-```
-
-[`release.yml`](.github/workflows/release.yml) builds the jar and publishes a GitHub release. It also uploads the version to Modrinth when the repository has a `MODRINTH_TOKEN` secret (scope: *Create versions*) and a `MODRINTH_PROJECT` variable. Versions below 1.0 or with a `-` suffix are published as pre-releases (Modrinth beta/alpha).
-
-To keep a release off Modrinth, put `[skip modrinth]` in an annotated tag's message:
-
-```bash
-git tag -a v1.1.5 -m "[skip modrinth]"
-git push origin v1.1.5
-```
-
 ## License
 
-[GPL-3.0-or-later](LICENSE.txt)
+[GPL-3.0-or-later](LICENSE)
