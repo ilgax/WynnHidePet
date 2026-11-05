@@ -24,24 +24,30 @@ object PetChatFilter {
 
     fun register() {
         ClientReceiveMessageEvents.ALLOW_GAME.register { message, overlay ->
-            if (overlay || !Wynncraft.isConnected(Minecraft.getInstance())) return@register true
-
-            val text = message.string
-            val isPet = when (leadingIcon(text)) {
-                PET_ICON -> true
-                CONTINUATION_ICON -> lastWasPet || speaker(text) in PetEntityTracker.knownPetNames
-                else -> false
-            }
-            lastWasPet = isPet
-            if (!isPet) return@register true
-
-            DebugCommand.recordPacket { "CHAT ${visibleText(text)}" }
-            PetEffectFilter.onPetChat()
-
-            val hide = getConfig().hidePetChat
-            if (hide) DebugOverlay.push("§dHid pet chat §7${visibleText(text)}")
-            !hide
+            // An exception here would disconnect the player, so any failure lets the message through.
+            runCatching { allow(message.string, overlay) }
+                .onFailure { WynnhidepetClient.LOGGER.error("Pet chat filter failed; letting the message through", it) }
+                .getOrDefault(true)
         }
+    }
+
+    private fun allow(text: String, overlay: Boolean): Boolean {
+        if (overlay || !Wynncraft.isConnected(Minecraft.getInstance())) return true
+
+        val isPet = when (leadingIcon(text)) {
+            PET_ICON -> true
+            CONTINUATION_ICON -> lastWasPet || speaker(text)?.let { it in PetEntityTracker.knownPetNames } == true
+            else -> false
+        }
+        lastWasPet = isPet
+        if (!isPet) return true
+
+        DebugCommand.recordPacket { "CHAT ${visibleText(text)}" }
+        PetEffectFilter.onPetChat()
+
+        val hide = getConfig().hidePetChat
+        if (hide) DebugOverlay.push("§dHid pet chat §7${visibleText(text)}")
+        return !hide
     }
 
     /** First private-use glyph of the message, or null; a continuation line reports [CONTINUATION_ICON]. */

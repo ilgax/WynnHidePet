@@ -32,46 +32,8 @@ class ModMenuIntegration : ModMenuApi {
             category.addEntry(
                 entryBuilder.startBooleanToggle(Component.literal("Show Toggle Message"), config.showToggleMessage)
                     .setDefaultValue(true)
-                    .setTooltip(Component.literal("Enable or disable chat message when pressing the toggle key"))
+                    .setTooltip(Component.literal("Show a popup when pressing the toggle key"))
                     .setSaveConsumer { config.showToggleMessage = it }
-                    .build()
-            )
-
-            category.addEntry(
-                entryBuilder.startIntField(Component.literal("Update Frequency"), config.updateFrequency)
-                    .setDefaultValue(5)
-                    .setMin(1)
-                    .setMax(100)
-                    .setTooltip(Component.literal("How often to scan for pets in ticks"))
-                    .setSaveConsumer { config.updateFrequency = it }
-                    .build()
-            )
-
-            category.addEntry(
-                entryBuilder.startIntField(Component.literal("Memory Duration (Ticks)"), config.memoryDurationTicks)
-                    .setDefaultValue(600)
-                    .setMin(20)
-                    .setMax(12000)
-                    .setTooltip(Component.literal("How long pets stay hidden after vanishing"))
-                    .setSaveConsumer { config.memoryDurationTicks = it }
-                    .build()
-            )
-
-            category.addEntry(
-                entryBuilder.startDoubleField(Component.literal("Search Radius"), config.searchRadius)
-                    .setDefaultValue(48.0)
-                    .setMin(8.0)
-                    .setMax(128.0)
-                    .setTooltip(Component.literal("Radius to look for pets"))
-                    .setSaveConsumer { config.searchRadius = it }
-                    .build()
-            )
-
-            category.addEntry(
-                entryBuilder.startBooleanToggle(Component.literal("Enable Lenient Clustering"), config.enableLenientClustering)
-                    .setDefaultValue(true)
-                    .setTooltip(Component.literal("Also hide pets whose nametag hasn't loaded yet, if their hitbox directly follows their model"))
-                    .setSaveConsumer { config.enableLenientClustering = it }
                     .build()
             )
 

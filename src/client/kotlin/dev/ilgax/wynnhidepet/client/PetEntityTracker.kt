@@ -31,10 +31,6 @@ object PetEntityTracker {
     /** Names shown on pet nametags (the text before the first pill), used to recognise pet chat. */
     val knownPetNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    private val entityExpirations: MutableMap<Int, Long> = HashMap()
-    private val newIds = HashSet<Int>()
-    private var localTick = 0L
-
     // Nametag labels use Wynncraft's banner "pill" font: U+E060 opens a pill, U+E030..U+E049 are a..z
     // and U+E062 closes it. Every pet nametag carries an exact [pet] pill; mobs carry [lv] only.
     private const val PET_BADGE = "\uE060\uE03F\uE034\uE043\uE062"
@@ -47,17 +43,28 @@ object PetEntityTracker {
 
     class PetAssembly(val ids: Set<Int>, val anchorId: Int, val reason: String)
 
-    fun isPetNametag(text: String): Boolean {
-        // Glyphs are separated by supplementary-plane spacer characters (e.g. U+CFFFF); drop them first.
+    fun isPetNametag(text: String): Boolean = stripSpacers(text).contains(PET_BADGE)
+
+    /** Glyphs are separated by supplementary-plane spacer characters (e.g. U+CFFFF); drop them and § codes. */
+    private fun stripSpacers(text: String): String {
         val clean = StringBuilder(text.length)
         text.replace(colorCodeRegex, "").codePoints().forEach { if (it <= 0xFFFF) clean.appendCodePoint(it) }
-        return clean.contains(PET_BADGE)
+        return clean.toString()
     }
 
-    fun findPets(level: ClientLevel, searchBox: AABB, allowUntagged: Boolean): List<PetAssembly> {
+    /** All loaded entities of [type], or only those inside [box] when given (debug captures). */
+    private fun <T : Entity> entitiesOf(level: ClientLevel, type: Class<T>, box: AABB?): List<T> =
+        if (box != null) level.getEntitiesOfClass(type, box) { true }
+        else level.entitiesForRendering().filterIsInstance(type)
+
+    /**
+     * @param searchBox null scans every loaded entity, so pets are hidden at any render distance.
+     */
+    fun findPets(level: ClientLevel, searchBox: AABB?): List<PetAssembly> {
         val pets = ArrayList<PetAssembly>()
 
-        for (tag in level.getEntitiesOfClass(TextDisplay::class.java, searchBox) { isPetNametag(it.text.string) }) {
+        for (tag in entitiesOf(level, TextDisplay::class.java, searchBox)) {
+            if (!isPetNametag(tag.text.string)) continue
             val name = tag.text.string.replace(colorCodeRegex, "").substringBefore('\uE060').trim()
             if (name.isNotEmpty()) knownPetNames.add(name)
 
@@ -74,21 +81,6 @@ object PetEntityTracker {
             }
             pets.add(PetAssembly(ids, tag.id, reason))
         }
-
-        // Nametag not loaded (out of range, or lagging behind its hitbox): accept a hitbox only if the
-        // model run directly precedes the missing nametag slot.
-        if (allowUntagged) {
-            for (hitbox in level.getEntitiesOfClass(Interaction::class.java, searchBox) { true }) {
-                if (level.getEntity(hitbox.id - 1) != null) continue
-                val ids = HashSet<Int>()
-                if (!collectModelBefore(level, hitbox.id - 1, ids)) continue
-                // Some world objects put their nametag *before* the model; such a model isn't a pet's.
-                if (level.getEntity(ids.min() - 1) is TextDisplay) continue
-                ids.add(hitbox.id)
-                pets.add(PetAssembly(ids, hitbox.id, "hitbox after model, nametag not loaded"))
-            }
-        }
-
         return pets
     }
 
@@ -146,40 +138,59 @@ object PetEntityTracker {
         entity.passengers.forEach { addWithPassengers(it, out) }
     }
 
+    /**
+     * Periodic scan interval. New pets are caught by spawn-triggered scans and stay hidden until unload,
+     * so this is only a safety net for nametag text that arrives unusually late.
+     */
+    const val SCAN_INTERVAL_TICKS = 10
+
+    // A spawn schedules a scan at the end of that tick and one more on the next tick: nametag text comes in
+    // a data packet after the spawn, and may land a tick later than the entity itself.
+    private const val SPAWN_SCAN_TICKS = 2
+
+    @Volatile
+    private var spawnScansLeft = 0
+
+    /** Called when a text display or interaction spawns. */
+    fun requestScan() {
+        spawnScansLeft = SPAWN_SCAN_TICKS
+    }
+
+    /** Once per tick: true while a spawn-triggered scan is still due. */
+    fun consumeSpawnScan(): Boolean {
+        if (spawnScansLeft <= 0) return false
+        spawnScansLeft--
+        return true
+    }
+
+    /**
+     * Membership is sticky: once an entity is recognised as part of a pet it stays hidden until it
+     * unloads or the world changes, so a nametag that briefly fails to match can't make a pet flicker.
+     * The server can't reuse an entity ID while that entity is still loaded, so this never leaks.
+     */
     fun update(client: Minecraft) {
         val config = getConfig()
-        localTick += config.updateFrequency.coerceAtLeast(1).toLong()
         // Sound and chat filtering need pet positions and names even while the pets themselves are shown.
         if (!config.hidePets && !config.hidePetSounds && !config.hidePetChat) {
-            petEntityIds.clear()
-            entityExpirations.clear()
+            reset()
             return
         }
         val level = client.level ?: return
-        val player = client.player ?: return
+        if (client.player == null) return
 
-        newIds.clear()
-        val searchBox = player.boundingBox.inflate(config.searchRadius)
-        for (pet in findPets(level, searchBox, config.enableLenientClustering)) {
-            newIds.addAll(pet.ids)
+        for (pet in findPets(level, null)) {
+            petEntityIds.addAll(pet.ids)
         }
+        // Backstop in case an unload event was missed.
+        petEntityIds.removeIf { level.getEntity(it) == null }
+    }
 
-        // Remember detected IDs for a while so pets don't flicker when a nametag briefly drops out.
-        for (id in newIds) {
-            entityExpirations[id] = localTick + config.memoryDurationTicks
-        }
-        entityExpirations.entries.removeIf { it.value < localTick }
-
-        // Sync the public set for the renderer and interaction mixins
-        val currentKeys = entityExpirations.keys
-        petEntityIds.removeIf { it !in currentKeys }
-        petEntityIds.addAll(currentKeys)
+    /** Called from the entity unload event; the ID may be reused by an unrelated entity afterwards. */
+    fun onEntityUnload(id: Int) {
+        petEntityIds.remove(id)
     }
 
     fun reset() {
         petEntityIds.clear()
-        entityExpirations.clear()
-        newIds.clear()
-        localTick = 0
     }
 }

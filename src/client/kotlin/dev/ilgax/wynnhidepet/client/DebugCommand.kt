@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents
 import net.minecraft.client.Minecraft
 import net.minecraft.core.particles.ParticleTypes
 import net.minecraft.core.registries.BuiltInRegistries
@@ -46,6 +47,14 @@ object DebugCommand {
                                 1
                             }
                             .then(
+                                literal("end")
+                                    .executes { ctx ->
+                                        if (ticksRemaining > 0) finishTimed(ctx.source.client)
+                                        else ctx.source.sendFeedback(Component.literal("§cNo debug session is running."))
+                                        1
+                                    }
+                            )
+                            .then(
                                 argument("seconds", IntegerArgumentType.integer(0, 300))
                                     .executes { ctx ->
                                         val s = IntegerArgumentType.getInteger(ctx, "seconds")
@@ -67,6 +76,20 @@ object DebugCommand {
                     )
             )
         }
+
+        // Entities appearing and disappearing (e.g. a pet re-sent after falling behind) during a capture.
+        ClientEntityEvents.ENTITY_LOAD.register { entity, _ -> recordEntity("LOAD", entity) }
+        ClientEntityEvents.ENTITY_UNLOAD.register { entity, _ -> recordEntity("UNLOAD", entity) }
+    }
+
+    private fun recordEntity(event: String, entity: Entity) {
+        if (ticksRemaining <= 0 || entity is Player) return
+        val player = Minecraft.getInstance().player ?: return
+        if (player.distanceTo(entity) > searchRadius) return
+        recordPacket {
+            "$event ${entity.id} ${BuiltInRegistries.ENTITY_TYPE.getKey(entity.type).path} " +
+                "pos=${fmt(entity.x)},${fmt(entity.y)},${fmt(entity.z)} self=${fmt(player.distanceTo(entity).toDouble())}"
+        }
     }
 
     fun tick(client: Minecraft) {
@@ -79,15 +102,17 @@ object DebugCommand {
         } else if (ticksRemaining > 0) {
             ticksRemaining--
             collectSnapshot(client)
-
-            if (ticksRemaining == 0) {
-                val file = writeFile(client)
-                client.player?.displayClientMessage(
-                    Component.literal("§aDebug session complete. Written to ").append(fileLink(file)),
-                    false
-                )
-            }
+            if (ticksRemaining == 0) finishTimed(client)
         }
+    }
+
+    private fun finishTimed(client: Minecraft) {
+        ticksRemaining = 0
+        val file = writeFile(client)
+        client.player?.displayClientMessage(
+            Component.literal("§aDebug session complete. Written to ").append(fileLink(file)),
+            false
+        )
     }
 
     private fun beginInstant(source: FabricClientCommandSource, radius: Double) {
@@ -115,6 +140,7 @@ object DebugCommand {
     private fun beginTimed(source: FabricClientCommandSource, seconds: Int, radius: Double) {
         entitySnapshots.clear()
         packetLog.clear()
+        lastTexts.clear()
         searchRadius = radius
         ticksRemaining = seconds * 20
         source.sendFeedback(
@@ -131,8 +157,18 @@ object DebugCommand {
             if (entity !is Player) {
                 entitySnapshots[entity.id] = snapshotEntity(entity, player, client)
             }
+            // Nametags can be blanked or rewritten while their entity stays; log each change with its tick.
+            if (entity is TextDisplay && ticksRemaining > 0) {
+                val text = entity.text.string
+                val previous = lastTexts.put(entity.id, text)
+                if (previous != text) {
+                    recordPacket { "TEXT ${entity.id} pet=${PetEntityTracker.isPetNametag(text)} '${text.replace("\n", "\\n")}'" }
+                }
+            }
         }
     }
+
+    private val lastTexts = HashMap<Int, String>()
 
     private fun spawnRingParticles(client: Minecraft) {
         if (ticksRemaining == 0) return
@@ -219,7 +255,7 @@ object DebugCommand {
         val annotations = mutableMapOf<Int, String>()
         val searchBox = player.boundingBox.inflate(searchRadius)
 
-        for (pet in PetEntityTracker.findPets(level, searchBox, getConfig().enableLenientClustering)) {
+        for (pet in PetEntityTracker.findPets(level, searchBox)) {
             for (id in pet.ids) {
                 annotations[id] = "DETECTED — Part of pet ${pet.anchorId} (${pet.reason}, ${pet.ids.size} entities)"
             }

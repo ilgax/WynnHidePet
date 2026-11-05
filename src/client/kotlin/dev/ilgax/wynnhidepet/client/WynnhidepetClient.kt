@@ -2,21 +2,30 @@ package dev.ilgax.wynnhidepet.client
 
 import com.mojang.blaze3d.platform.InputConstants
 import dev.ilgax.wynnhidepet.ModConfig
-import dev.ilgax.wynnhidepet.getConfig
 import me.shedaniel.autoconfig.AutoConfig
 import net.fabricmc.api.ClientModInitializer
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
+import net.minecraft.ChatFormatting
 import net.minecraft.client.KeyMapping
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.components.toasts.SystemToast
 import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
+import net.minecraft.world.entity.Display
+import net.minecraft.world.entity.Interaction
 import org.lwjgl.glfw.GLFW
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class WynnhidepetClient : ClientModInitializer {
 
     companion object {
+        val LOGGER: Logger = LoggerFactory.getLogger("wynnhidepet")
+
         private val CUSTOM_CATEGORY = KeyMapping.Category.register(
             Identifier.fromNamespaceAndPath("wynnhidepet", "keys")
         )
@@ -29,6 +38,14 @@ class WynnhidepetClient : ClientModInitializer {
                 CUSTOM_CATEGORY
             )
         )
+
+        // One shared token, so pressing the key again updates the visible toast instead of stacking new ones.
+        private val TOGGLE_TOAST = SystemToast.SystemToastId(2500L)
+        private val TOAST_TITLE: Component = Component.literal("WynnCraft Hide Pets")
+
+        private fun showToast(client: Minecraft, message: Component) {
+            SystemToast.addOrUpdate(client.toastManager, TOGGLE_TOAST, TOAST_TITLE, message)
+        }
     }
 
     private var ticks = 0
@@ -48,11 +65,13 @@ class WynnhidepetClient : ClientModInitializer {
             }
 
             val isOnWynncraft = Wynncraft.isConnected(client)
-            val config = getConfig()
 
             if (isOnWynncraft) {
-                ticks = (ticks + 1) % config.updateFrequency.coerceAtLeast(1)
-                if (ticks == 0) {
+                ticks = (ticks + 1) % PetEntityTracker.SCAN_INTERVAL_TICKS
+                // A pet nametag/hitbox spawned this tick or last tick (world change, teleport, pet summon):
+                // scan now so the pet never renders before the next scheduled update.
+                val spawnScan = PetEntityTracker.consumeSpawnScan()
+                if (ticks == 0 || spawnScan) {
                     PetEntityTracker.update(client)
                 }
             }
@@ -66,10 +85,7 @@ class WynnhidepetClient : ClientModInitializer {
 
                 if (!isOnWynncraft) {
                     if (currentConfig.showToggleMessage) {
-                        client.player?.displayClientMessage(
-                            Component.literal("§cWynnCraft Hide Pets only works on Wynncraft!"),
-                            false
-                        )
+                        showToast(client, Component.literal("Only works on Wynncraft").withStyle(ChatFormatting.RED))
                     }
                     continue
                 }
@@ -77,21 +93,26 @@ class WynnhidepetClient : ClientModInitializer {
                 currentConfig.hidePets = !currentConfig.hidePets
                 holder.save()
 
-                if (currentConfig.hidePets) {
-                    // Trigger an immediate update to hide pets instantly
-                    PetEntityTracker.update(client)
-                } else {
-                    // Force clear everything if showing pets
-                    PetEntityTracker.reset()
-                }
+                // Rescan right away so pets hide instantly. Rendering and clicking check hidePets themselves, and
+                // the IDs stay tracked while showing pets if sound or chat hiding still needs them.
+                PetEntityTracker.update(client)
 
                 if (currentConfig.showToggleMessage) {
-                    client.player?.displayClientMessage(
-                        Component.literal("§ePets: ${if (currentConfig.hidePets) "§cHIDDEN" else "§aVISIBLE"}"),
-                        false
+                    showToast(
+                        client,
+                        if (currentConfig.hidePets) Component.literal("Pets hidden").withStyle(ChatFormatting.RED)
+                        else Component.literal("Pets visible").withStyle(ChatFormatting.GREEN)
                     )
                 }
             }
+        }
+
+        // Text content arrives in a data packet after the spawn, so only flag here and scan at tick end.
+        ClientEntityEvents.ENTITY_LOAD.register { entity, _ ->
+            if (entity is Display.TextDisplay || entity is Interaction) PetEntityTracker.requestScan()
+        }
+        ClientEntityEvents.ENTITY_UNLOAD.register { entity, _ ->
+            PetEntityTracker.onEntityUnload(entity.id)
         }
 
         ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->

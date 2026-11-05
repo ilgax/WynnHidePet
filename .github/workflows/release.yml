@@ -1,0 +1,90 @@
+name: release
+
+# Push a tag like v1.1.5 to build the jar and publish a GitHub release with it, with GitHub's generated notes.
+# The tag must match mod_version in gradle.properties without its "+<minecraft version>" suffix
+# (mod_version=1.1.5+1.21.11 -> tag v1.1.5). Versions below 1.0 or with a "-" suffix (1.2.0-beta) are pre-releases.
+#
+# It also uploads the version to Modrinth when the repository has a MODRINTH_TOKEN secret (a Modrinth personal
+# access token with the "Create versions" scope) and a MODRINTH_PROJECT variable (the project's slug or id).
+# To keep one release off Modrinth, put [skip modrinth] in its tag's message:
+#   git tag -a v1.1.6 -m "[skip modrinth]" && git push origin v1.1.6
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+# Also here, so the Modrinth step can check whether the secret exists.
+env:
+  MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check the tag matches the version
+        run: |
+          version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)
+          if [ "v${version%%+*}" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match mod_version=$version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE=${version%%+*}" >> "$GITHUB_ENV"
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          if git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | grep -qiF '[skip modrinth]'; then
+            echo "SKIP_MODRINTH=true" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew build
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$RELEASE" in 0.*|*-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" $prerelease --title "$GITHUB_REF_NAME" --generate-notes \
+            "build/libs/wynnhidepet-$VERSION.jar"
+      - name: Upload to Modrinth
+        if: ${{ env.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT != '' && env.SKIP_MODRINTH != 'true' }}
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Reuse the GitHub release's generated notes as the Modrinth changelog.
+          gh release view "$GITHUB_REF_NAME" --json body --jq .body > changelog.md
+          api=https://api.modrinth.com/v2
+          agent="ilgax/WynnHidePet release"
+          id_of() { curl -fsS -H "User-Agent: $agent" "$api/project/$1" | jq -r .id; }
+          project=$(id_of "$MODRINTH_PROJECT")
+          minecraft=$(grep '^minecraft_version=' gradle.properties | cut -d= -f2)
+          type=release
+          case "$RELEASE" in 0.*) type=beta ;; *-alpha*) type=alpha ;; *-*) type=beta ;; esac
+          jq -n --arg project "$project" --arg version "$VERSION" --arg type "$type" --arg mc "$minecraft" \
+                --arg api "$(id_of fabric-api)" --arg kotlin "$(id_of fabric-language-kotlin)" \
+                --arg cloth "$(id_of cloth-config)" --arg modmenu "$(id_of modmenu)" \
+                --arg name "$GITHUB_REF_NAME" --rawfile notes changelog.md '{
+            project_id: $project, version_number: $version, name: $name, version_type: $type,
+            changelog: $notes, game_versions: [$mc], loaders: ["fabric"], featured: true,
+            dependencies: [
+              {project_id: $api, dependency_type: "required"},
+              {project_id: $kotlin, dependency_type: "required"},
+              {project_id: $cloth, dependency_type: "required"},
+              {project_id: $modmenu, dependency_type: "optional"}
+            ],
+            file_parts: ["jar"], primary_file: "jar"
+          }' > modrinth.json
+          curl -fsS -X POST "$api/version" -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $agent" \
+            -F "data=@modrinth.json;type=application/json" \
+            -F "jar=@build/libs/wynnhidepet-$VERSION.jar" | jq -r '"Modrinth version " + .id'
