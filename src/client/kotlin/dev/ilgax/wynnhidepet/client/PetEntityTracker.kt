@@ -28,9 +28,6 @@ object PetEntityTracker {
 
     val petEntityIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
 
-    /** Names shown on pet nametags (the text before the first pill), used to recognise pet chat. */
-    val knownPetNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
     // Nametag labels use Wynncraft's banner "pill" font: U+E060 opens a pill, U+E030..U+E049 are a..z
     // and U+E062 closes it. Every pet nametag carries an exact [pet] pill; mobs carry [lv] only.
     private const val PET_BADGE = "\uE060\uE03F\uE034\uE043\uE062"
@@ -65,8 +62,6 @@ object PetEntityTracker {
 
         for (tag in entitiesOf(level, TextDisplay::class.java, searchBox)) {
             if (!isPetNametag(tag.text.string)) continue
-            val name = tag.text.string.replace(colorCodeRegex, "").substringBefore('\uE060').trim()
-            if (name.isNotEmpty()) knownPetNames.add(name)
 
             val ids = HashSet<Int>()
             ids.add(tag.id)

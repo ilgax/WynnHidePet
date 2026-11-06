@@ -3,6 +3,9 @@ package dev.ilgax.wynnhidepet.client
 import dev.ilgax.wynnhidepet.getConfig
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents
 import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
+import net.minecraft.network.chat.Style
+import java.util.Optional
 
 /**
  * Hides pet chatter ("Myhsin: tsss") and pet level-ups.
@@ -12,7 +15,8 @@ import net.minecraft.client.Minecraft
  *   first pet line of a run:  U+CFFFC  U+E016 (pet icon)  U+CFFFF  U+E002 (stripe)  U+CFFFE   Myhsin: tsss
  *   later lines of the run:   U+CFFFC  U+E001 (stripe only)  U+D0006                         Myhsin: whsshh
  *
- * Later lines carry no pet marker at all, so they are recognised by the previous line or the speaker's name.
+ * Later lines share their glyphs with guild, party and private messages, so they are told apart by colour,
+ * as Wynntils does: a gold prefix and name, then the text in pet beige (#FFDD99).
  */
 object PetChatFilter {
 
@@ -20,26 +24,27 @@ object PetChatFilter {
     private const val CONTINUATION_ICON = 0xE001
     private const val CONTINUATION_MARK = 0xD0006
 
-    private var lastWasPet = false
+    private const val PREFIX_COLOUR = 0xFFAA00 // ChatFormatting.GOLD
+    private const val TEXT_COLOUR = 0xFFDD99
 
     fun register() {
         ClientReceiveMessageEvents.ALLOW_GAME.register { message, overlay ->
             // An exception here would disconnect the player, so any failure lets the message through.
-            runCatching { allow(message.string, overlay) }
+            runCatching { allow(message, overlay) }
                 .onFailure { WynnhidepetClient.LOGGER.error("Pet chat filter failed; letting the message through", it) }
                 .getOrDefault(true)
         }
     }
 
-    private fun allow(text: String, overlay: Boolean): Boolean {
+    private fun allow(message: Component, overlay: Boolean): Boolean {
         if (overlay || !Wynncraft.isConnected(Minecraft.getInstance())) return true
 
+        val text = message.string
         val isPet = when (leadingIcon(text)) {
             PET_ICON -> true
-            CONTINUATION_ICON -> lastWasPet || speaker(text)?.let { it in PetEntityTracker.knownPetNames } == true
+            CONTINUATION_ICON -> hasPetColours(message)
             else -> false
         }
-        lastWasPet = isPet
         if (!isPet) return true
 
         DebugCommand.recordPacket { "CHAT ${visibleText(text)}" }
@@ -66,8 +71,24 @@ object PetChatFilter {
         return null
     }
 
-    /** "Myhsin" for "<prefix> Myhsin: tsss". */
-    private fun speaker(text: String): String? = visibleText(text).substringBefore(": ", "").ifEmpty { null }
+    /** Gold prefix (the first styled segment) and some visible text in pet beige. */
+    private fun hasPetColours(message: Component): Boolean {
+        var prefixColour: Int? = null
+        var seenPrefix = false
+        var hasPetText = false
+        message.visit<Unit>({ style, segment ->
+            if (segment.isNotEmpty()) {
+                val colour = style.color?.value
+                if (!seenPrefix) {
+                    seenPrefix = true
+                    prefixColour = colour
+                }
+                if (colour == TEXT_COLOUR && segment.isNotBlank()) hasPetText = true
+            }
+            Optional.empty()
+        }, Style.EMPTY)
+        return prefixColour == PREFIX_COLOUR && hasPetText
+    }
 
     private fun visibleText(text: String): String {
         val sb = StringBuilder(text.length)
