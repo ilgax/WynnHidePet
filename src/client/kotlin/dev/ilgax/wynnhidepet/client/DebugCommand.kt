@@ -39,9 +39,9 @@ object DebugCommand {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
             dispatcher.register(
                 literal("whp")
-                    .requires { getConfig().enableDebugTools }
                     .then(
                         literal("debug")
+                            .requires { getConfig().enableDebugTools }
                             .executes { ctx ->
                                 beginInstant(ctx.source, DEFAULT_RADIUS.toDouble())
                                 1

@@ -6,7 +6,7 @@ It only works while you're connected to Wynncraft.
 
 ## Features
 
-- **Hide pets**: Models, nametags and hitboxes, at any distance and the moment they load. Press **`H`** to toggle.
+- **Hide pets**: Models, nametags and hitboxes, at any distance and the moment they load. Press **`H`** or run **`/whp toggle`** to toggle (`/whp toggle on`/`off` to set it directly).
 - **Click through pets**: Attacks and right-clicks will go through hidden pets to whatever is behind them.
 - **Hide pet chat**: Hides pet chat messages. Works while pets are shown too.
 - **Mute pet sounds**: Mutes the noises pets make. Works while pets are shown too.
@@ -18,8 +18,8 @@ Open them through [Mod Menu](https://modrinth.com/mod/modmenu).
 
 | Setting | Default | What it does |
 |---|---|---|
-| Hide Pets | off | Hide pets (same as pressing `H`) |
-| Show Toggle Message | on | Popup (toast) when pressing `H` |
+| Hide Pets | off | Hide pets (same as pressing `H` or `/whp toggle`) |
+| Show Toggle Message | on | Popup (toast) when pressing `H` or running `/whp toggle` |
 | Hide Pet Chat | off | Hide pet chat messages |
 | Hide Pet Sounds | off | Mute sounds pets make |
 | Enable Debug Tools | off | On-screen feed of what the mod hides or mutes, and the `/whp debug` command |

@@ -46,6 +46,37 @@ class WynnhidepetClient : ClientModInitializer {
         private fun showToast(client: Minecraft, message: Component) {
             SystemToast.addOrUpdate(client.toastManager, TOGGLE_TOAST, TOAST_TITLE, message)
         }
+
+        /**
+         * Shared by the toggle key and `/whp toggle`: sets Hide Pets to [value], or flips it when null,
+         * saves the config, rescans right away and shows the toast.
+         */
+        fun setHidePets(client: Minecraft, value: Boolean?) {
+            val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
+            val config = holder.config
+
+            if (!Wynncraft.isConnected(client)) {
+                if (config.showToggleMessage) {
+                    showToast(client, Component.literal("Only works on Wynncraft").withStyle(ChatFormatting.RED))
+                }
+                return
+            }
+
+            config.hidePets = value ?: !config.hidePets
+            holder.save()
+
+            // Rescan right away so pets hide instantly. Rendering and clicking check hidePets themselves, and
+            // the IDs stay tracked while showing pets if sound or chat hiding still needs them.
+            PetEntityTracker.update(client)
+
+            if (config.showToggleMessage) {
+                showToast(
+                    client,
+                    if (config.hidePets) Component.literal("Pets hidden").withStyle(ChatFormatting.RED)
+                    else Component.literal("Pets visible").withStyle(ChatFormatting.GREEN)
+                )
+            }
+        }
     }
 
     private var ticks = 0
@@ -53,6 +84,7 @@ class WynnhidepetClient : ClientModInitializer {
 
     override fun onInitializeClient() {
         DebugCommand.register()
+        ToggleCommand.register()
         PetChatFilter.register()
         DebugOverlay.register()
 
@@ -80,30 +112,7 @@ class WynnhidepetClient : ClientModInitializer {
             PetEffectFilter.releaseHeldSounds(client)
 
             while (toggleKey.consumeClick()) {
-                val holder = AutoConfig.getConfigHolder(ModConfig::class.java)
-                val currentConfig = holder.config
-
-                if (!isOnWynncraft) {
-                    if (currentConfig.showToggleMessage) {
-                        showToast(client, Component.literal("Only works on Wynncraft").withStyle(ChatFormatting.RED))
-                    }
-                    continue
-                }
-
-                currentConfig.hidePets = !currentConfig.hidePets
-                holder.save()
-
-                // Rescan right away so pets hide instantly. Rendering and clicking check hidePets themselves, and
-                // the IDs stay tracked while showing pets if sound or chat hiding still needs them.
-                PetEntityTracker.update(client)
-
-                if (currentConfig.showToggleMessage) {
-                    showToast(
-                        client,
-                        if (currentConfig.hidePets) Component.literal("Pets hidden").withStyle(ChatFormatting.RED)
-                        else Component.literal("Pets visible").withStyle(ChatFormatting.GREEN)
-                    )
-                }
+                setHidePets(client, null)
             }
         }
 
