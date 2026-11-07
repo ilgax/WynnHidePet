@@ -50,8 +50,8 @@ object PetChatFilter {
         DebugCommand.recordPacket { "CHAT ${visibleText(text)}" }
         PetEffectFilter.onPetChat()
 
-        val hide = getConfig().hidePetChat
-        if (hide) DebugOverlay.push("§dHid pet chat §7${visibleText(text)}")
+        val hide = getConfig().chatHidden
+        if (hide) DebugOverlay.push(DebugOverlay.Kind.CHAT, "§dHid pet chat §7${visibleText(text)}")
         return !hide
     }
 

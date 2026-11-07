@@ -30,8 +30,8 @@ object PetEffectFilter {
     fun shouldHideEntitySound(sound: Identifier, source: SoundSource, entityId: Int): Boolean {
         val isPet = entityId in PetEntityTracker.petEntityIds
         DebugCommand.recordPacket { "SOUND@ENTITY $sound source=$source entity=$entityId pet=$isPet" }
-        if (!isPet || !getConfig().hidePetSounds) return false
-        DebugOverlay.push("§bMuted pet sound §7${sound.path}")
+        if (!isPet || !getConfig().soundsHidden) return false
+        DebugOverlay.push(DebugOverlay.Kind.SOUND, "§bMuted pet sound §7${sound.path}")
         return true
     }
 
@@ -42,7 +42,7 @@ object PetEffectFilter {
         val client = Minecraft.getInstance()
         val level = client.level ?: return false
         val player = client.player ?: return false
-        if (!getConfig().hidePetSounds) return false
+        if (!getConfig().soundsHidden) return false
         // Every observed pet sound uses MASTER; music (RECORDS), blocks and other players use their own sources.
         if (packet.source != SoundSource.MASTER) return false
 
@@ -52,7 +52,7 @@ object PetEffectFilter {
         val petDistSq = nearestPetDistSq(level, packet.x, packet.y, packet.z)
         if (petDistSq <= PET_SOUND_RADIUS_SQ && sqrt(playerDistSq) >= sqrt(petDistSq) + PLAYER_MARGIN) {
             DebugCommand.recordPacket { "DROPPED $sound" }
-            DebugOverlay.push("§bMuted pet sound §7${sound.path}")
+            DebugOverlay.push(DebugOverlay.Kind.SOUND, "§bMuted pet sound §7${sound.path}")
             return true
         }
 
@@ -67,11 +67,11 @@ object PetEffectFilter {
 
     /** Called for every pet chat line: drops the sound that announced it. */
     fun onPetChat() {
-        if (!getConfig().hidePetSounds) return
+        if (!getConfig().soundsHidden) return
         for (packet in heldSounds) {
             val sound = packet.sound.value().location()
             DebugCommand.recordPacket { "DROPPED-WITH-CHAT $sound" }
-            DebugOverlay.push("§bMuted pet chat sound §7${sound.path}")
+            DebugOverlay.push(DebugOverlay.Kind.SOUND, "§bMuted pet chat sound §7${sound.path}")
         }
         heldSounds.clear()
     }

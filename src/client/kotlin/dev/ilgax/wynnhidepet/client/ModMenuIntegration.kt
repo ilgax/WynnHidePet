@@ -2,6 +2,7 @@ package dev.ilgax.wynnhidepet.client
 
 import com.terraformersmc.modmenu.api.ConfigScreenFactory
 import com.terraformersmc.modmenu.api.ModMenuApi
+import dev.ilgax.wynnhidepet.HideMode
 import dev.ilgax.wynnhidepet.ModConfig
 import dev.ilgax.wynnhidepet.getConfig
 import me.shedaniel.autoconfig.AutoConfig
@@ -24,7 +25,7 @@ class ModMenuIntegration : ModMenuApi {
 
             category.addEntry(
                 entryBuilder.startBooleanToggle(Component.literal("Hide Pets"), config.hidePets)
-                    .setDefaultValue(true)
+                    .setDefaultValue(false)
                     .setSaveConsumer { config.hidePets = it }
                     .build()
             )
@@ -38,18 +39,26 @@ class ModMenuIntegration : ModMenuApi {
             )
 
             category.addEntry(
-                entryBuilder.startBooleanToggle(Component.literal("Hide Pet Chat"), config.hidePetChat)
-                    .setDefaultValue(false)
-                    .setTooltip(Component.literal("Hide pet chat messages and level-ups, even while pets are shown"))
-                    .setSaveConsumer { config.hidePetChat = it }
+                entryBuilder.startEnumSelector(Component.literal("Hide Pet Chat"), HideMode::class.java, config.petChat)
+                    .setDefaultValue(HideMode.FOLLOW_HIDE_PETS)
+                    .setEnumNameProvider { Component.literal((it as HideMode).label) }
+                    .setTooltip(
+                        Component.literal("Hide pet chat messages and level-ups."),
+                        Component.literal("Follow Hide Pets: only while Hide Pets is on, so the toggle key switches it too.")
+                    )
+                    .setSaveConsumer { config.petChat = it }
                     .build()
             )
 
             category.addEntry(
-                entryBuilder.startBooleanToggle(Component.literal("Hide Pet Sounds"), config.hidePetSounds)
-                    .setDefaultValue(false)
-                    .setTooltip(Component.literal("Mute sounds pets make, even while pets are shown"))
-                    .setSaveConsumer { config.hidePetSounds = it }
+                entryBuilder.startEnumSelector(Component.literal("Hide Pet Sounds"), HideMode::class.java, config.petSounds)
+                    .setDefaultValue(HideMode.FOLLOW_HIDE_PETS)
+                    .setEnumNameProvider { Component.literal((it as HideMode).label) }
+                    .setTooltip(
+                        Component.literal("Mute sounds pets make."),
+                        Component.literal("Follow Hide Pets: only while Hide Pets is on, so the toggle key switches it too.")
+                    )
+                    .setSaveConsumer { config.petSounds = it }
                     .build()
             )
 
@@ -62,6 +71,21 @@ class ModMenuIntegration : ModMenuApi {
                     .setSaveConsumer { config.enableDebugTools = it }
                     .build()
             )
+
+            val feed = entryBuilder.startSubCategory(Component.literal("Debug Feed"))
+            feed.add(
+                entryBuilder.startBooleanToggle(Component.literal("Show Hidden Chat"), config.debugFeedChat)
+                    .setDefaultValue(true)
+                    .setSaveConsumer { config.debugFeedChat = it }
+                    .build()
+            )
+            feed.add(
+                entryBuilder.startBooleanToggle(Component.literal("Show Muted Sounds"), config.debugFeedSounds)
+                    .setDefaultValue(true)
+                    .setSaveConsumer { config.debugFeedSounds = it }
+                    .build()
+            )
+            experimentalCategory.addEntry(feed.setTooltip(Component.literal("Which kinds of hides appear in the on-screen feed")).build())
 
             builder.setSavingRunnable {
                 AutoConfig.getConfigHolder(ModConfig::class.java).save()

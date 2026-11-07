@@ -20,9 +20,10 @@ Open them through [Mod Menu](https://modrinth.com/mod/modmenu).
 |---|---|---|
 | Hide Pets | off | Hide pets (same as pressing `H` or `/whp toggle`) |
 | Show Toggle Message | on | Popup (toast) when pressing `H` or running `/whp toggle` |
-| Hide Pet Chat | off | Hide pet chat messages |
-| Hide Pet Sounds | off | Mute sounds pets make |
+| Hide Pet Chat | Follow Hide Pets | Hide pet chat messages: Off, On, or Follow Hide Pets (only while pets are hidden, so `H` switches it too) |
+| Hide Pet Sounds | Follow Hide Pets | Mute sounds pets make: Off, On, or Follow Hide Pets |
 | Enable Debug Tools | off | On-screen feed of what the mod hides or mutes, and the `/whp debug` command |
+| Debug Feed | all on | Pick which hides (chat, sounds) show in the on-screen feed |
 
 ## Requirements
 

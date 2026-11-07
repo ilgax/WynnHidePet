@@ -23,8 +23,17 @@ object DebugOverlay {
         }
     }
 
-    fun push(text: String) {
-        if (!getConfig().enableDebugTools) return
+    /** What a feed line is about; each kind can be switched off in the settings. */
+    enum class Kind { CHAT, SOUND }
+
+    fun push(kind: Kind, text: String) {
+        val config = getConfig()
+        if (!config.enableDebugTools) return
+        val shown = when (kind) {
+            Kind.CHAT -> config.debugFeedChat
+            Kind.SOUND -> config.debugFeedSounds
+        }
+        if (!shown) return
         entries.addLast(Entry(text, System.currentTimeMillis()))
         while (entries.size > MAX_LINES) entries.removeFirst()
     }

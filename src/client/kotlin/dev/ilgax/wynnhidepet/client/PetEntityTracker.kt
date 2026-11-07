@@ -166,7 +166,7 @@ object PetEntityTracker {
     fun update(client: Minecraft) {
         val config = getConfig()
         // Sound and chat filtering need pet positions and names even while the pets themselves are shown.
-        if (!config.hidePets && !config.hidePetSounds && !config.hidePetChat) {
+        if (!config.hidePets && !config.soundsHidden && !config.chatHidden) {
             reset()
             return
         }
